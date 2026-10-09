@@ -1,0 +1,598 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Road Watch</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+/* Layout: a Telegram Mini App — compact header with tabs; map fills the screen, lists scroll under it.
+   Colors follow the user's Telegram theme; red/amber/green are reserved for road and truck state. */
+:root{
+  --bg: var(--tg-theme-bg-color, #ffffff);
+  --bg2: var(--tg-theme-secondary-bg-color, #f1f3f2);
+  --fg: var(--tg-theme-text-color, #15191c);
+  --muted: var(--tg-theme-hint-color, #6b737b);
+  --link: var(--tg-theme-link-color, #2a6fd6);
+  --btn: var(--tg-theme-button-color, #2a6fd6);
+  --btn-fg: var(--tg-theme-button-text-color, #ffffff);
+  --line: color-mix(in srgb, var(--fg) 12%, transparent);
+  --road: #d13a2f; --park: #c27a0a; --ok: #1d8a6b; --quiet: #b08a1a; --off: #8a9199;
+  --road-bg: color-mix(in srgb, var(--road) 13%, transparent);
+  --park-bg: color-mix(in srgb, var(--park) 15%, transparent);
+  --ok-bg: color-mix(in srgb, var(--ok) 14%, transparent);
+  --ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --data: ui-monospace, "SF Mono", "Roboto Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark){:root{
+  --bg: var(--tg-theme-bg-color, #17191c);
+  --bg2: var(--tg-theme-secondary-bg-color, #22262a);
+  --fg: var(--tg-theme-text-color, #eceef0);
+  --muted: var(--tg-theme-hint-color, #9aa2aa);
+  --link: var(--tg-theme-link-color, #6ea8ff);
+  --btn: var(--tg-theme-button-color, #3b82f6);
+  color-scheme: dark}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font:15px/1.4 var(--ui);-webkit-font-smoothing:antialiased;display:flex;flex-direction:column;overflow:hidden}
+button{font:inherit;color:inherit}
+.top{flex:none;padding:10px 16px 0;background:var(--bg);border-bottom:1px solid var(--line);display:grid;gap:8px}
+.brand{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+.brand h1{margin:0;font-size:17px;font-weight:650;letter-spacing:-.01em}
+.brand small{color:var(--muted);font-size:12px;white-space:nowrap}
+.tabs{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none}
+.tab{flex:1 0 auto;border:0;background:none;padding:8px 10px 10px;font-size:14px;font-weight:550;color:var(--muted);border-bottom:2px solid transparent;cursor:pointer;display:inline-flex;gap:6px;align-items:center;justify-content:center}
+.tab[aria-selected="true"]{color:var(--fg);border-bottom-color:var(--btn)}
+.tab .n{font:600 11px/1 var(--data);background:var(--road);color:#fff;border-radius:9px;padding:3px 6px}
+.tab .n[hidden]{display:none}
+main{flex:1;min-height:0;position:relative}
+.view{position:absolute;inset:0;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.view.pad{padding:12px 16px calc(24px + env(safe-area-inset-bottom,0px))}
+#map{position:absolute;inset:0;background:var(--bg2)}
+.fab{position:absolute;right:12px;bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:500;border:0;border-radius:20px;padding:9px 14px;background:var(--bg);color:var(--fg);box-shadow:0 2px 10px rgba(0,0,0,.18);font-size:13px;font-weight:600;cursor:pointer}
+.legend{position:absolute;left:12px;bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:500;background:var(--bg);border-radius:10px;padding:7px 10px;font-size:11.5px;color:var(--muted);box-shadow:0 2px 10px rgba(0,0,0,.12);display:grid;gap:3px}
+.legend i{display:inline-block;width:18px;height:0;border-top:4px solid var(--road);vertical-align:middle;margin-right:6px}
+.legend i.p{border-top:3px dashed var(--park)}
+@media (prefers-color-scheme: dark){ .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.85) contrast(.9)} }
+body.dark .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.85) contrast(.9)}
+body.light .leaflet-tile-pane{filter:none}
+.tm{display:flex;align-items:center;gap:5px;transform:translate(-9px,-9px)}
+.tm b{width:18px;height:18px;border-radius:50%;background:var(--ok);border:3px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35);flex:none}
+.tm span{font:600 12px/1 var(--data);background:#fff;color:#111;border-radius:6px;padding:4px 6px;box-shadow:0 1px 4px rgba(0,0,0,.25);white-space:nowrap}
+.tm.quiet b{background:var(--quiet)} .tm.off b{background:var(--off)}
+.tm.alert b{background:var(--road);animation:pulse 1.4s ease-out infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(209,58,47,.55)}100%{box-shadow:0 0 0 14px rgba(209,58,47,0)}}
+@media (prefers-reduced-motion: reduce){.tm.alert b{animation:none}}
+.fm{font:600 10.5px/1 var(--data);color:#fff;background:#1d8a6b;border-radius:4px;padding:3px 5px;transform:translate(-50%,-50%);white-space:nowrap;opacity:.92}
+.leaflet-popup-content{margin:12px 14px;font:13px/1.45 var(--ui)}
+.leaflet-popup-content b{font-size:14px}
+.list{display:grid;gap:10px}
+.card{background:var(--bg2);border-radius:14px;padding:12px 14px;display:grid;gap:6px;min-width:0}
+.row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0}
+.num{font:650 16px/1.2 var(--data)}
+.sub{color:var(--muted);font-size:13px;min-width:0;overflow-wrap:anywhere}
+.dot{width:10px;height:10px;border-radius:50%;flex:none;background:var(--ok)}
+.dot.quiet{background:var(--quiet)} .dot.off{background:var(--off)} .dot.broken{background:var(--road)}
+.pill{font-size:11.5px;font-weight:650;letter-spacing:.02em;border-radius:6px;padding:2px 7px;white-space:nowrap}
+.p-road{color:var(--road);background:var(--road-bg)} .p-park{color:var(--park);background:var(--park-bg)}
+.p-ok{color:var(--ok);background:var(--ok-bg)} .p-muted{color:var(--muted);background:color-mix(in srgb,var(--muted) 14%,transparent)}
+.warn{color:var(--road);font-size:12.5px}
+.copy{border:0;background:none;color:var(--link);padding:0;font:600 13px var(--data);cursor:pointer}
+.filters{display:grid;gap:8px;margin-bottom:12px}
+.chips{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;padding-bottom:2px}
+.chip{border:1px solid var(--line);background:var(--bg);border-radius:16px;padding:6px 11px;font-size:13px;white-space:nowrap;cursor:pointer}
+.chip[aria-pressed="true"]{background:var(--btn);color:var(--btn-fg);border-color:var(--btn)}
+select{font:inherit;font-size:13.5px;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:6px 8px;max-width:100%}
+.day{font-size:12px;font-weight:650;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin:14px 2px 6px}
+.day:first-child{margin-top:0}
+.al{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;padding:10px 12px;background:var(--bg2);border-radius:12px;margin-bottom:6px;min-width:0}
+.al time{font:600 12.5px/1.6 var(--data);color:var(--muted);grid-row:span 2}
+.al .what{display:flex;gap:6px;align-items:center;flex-wrap:wrap;min-width:0}
+.ack{font-size:12.5px} .ack.no{color:var(--road)} .ack.yes{color:var(--ok)}
+.empty{color:var(--muted);text-align:center;padding:40px 16px;display:grid;gap:6px}
+.empty b{color:var(--fg);font-size:15px}
+.ev{cursor:pointer;border:0;text-align:left;width:100%}
+.ev:focus-visible,.chip:focus-visible,.tab:focus-visible,.fab:focus-visible{outline:2px solid var(--btn);outline-offset:2px}
+.sheet{position:absolute;inset:0;background:var(--bg);z-index:900;display:flex;flex-direction:column}
+.sheet[hidden]{display:none}
+#evmap{height:46%;min-height:220px;flex:none;background:var(--bg2)}
+.sheet .body{flex:1;overflow-y:auto;padding:14px 16px calc(80px + env(safe-area-inset-bottom,0px));display:grid;gap:12px;align-content:start}
+.sheet h2{margin:0;font-size:18px;letter-spacing:-.01em}
+.facts{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:13.5px}
+.facts dt{color:var(--muted)} .facts dd{margin:0;min-width:0;overflow-wrap:anywhere}
+.tl{display:grid;gap:4px;font-size:13px}
+.tl div{display:flex;gap:10px} .tl time{font-family:var(--data);color:var(--muted);flex:none}
+.close{position:absolute;top:10px;right:10px;z-index:950;border:0;border-radius:18px;padding:7px 12px;background:var(--bg);box-shadow:0 2px 8px rgba(0,0,0,.2);font-weight:600;cursor:pointer}
+.sendbtn{border:0;border-radius:12px;padding:13px;background:var(--btn);color:var(--btn-fg);font-weight:650;cursor:pointer}
+.addbtn{border:0;border-radius:12px;padding:12px;background:var(--btn);color:var(--btn-fg);font-weight:650;cursor:pointer;width:100%;margin-bottom:12px}
+.acts{display:flex;gap:16px;flex-wrap:wrap}
+.danger{color:var(--road)}
+.form{position:absolute;inset:0;background:var(--bg);z-index:920;overflow-y:auto;padding:16px 16px calc(32px + env(safe-area-inset-bottom,0px))}
+.form[hidden]{display:none}
+.form h2{margin:0 0 4px;font-size:18px}
+.form label{display:grid;gap:6px;margin-top:14px;font-size:13.5px;font-weight:600}
+.form label small{font-weight:400;color:var(--muted)}
+.form input,.form textarea,.form select{font:inherit;font-size:15px;color:var(--fg);background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;width:100%}
+.form textarea{min-height:84px;font:13px/1.4 var(--data);resize:vertical;overflow-wrap:anywhere}
+.form .err{color:var(--road);font-size:13px;margin-top:12px;min-height:1em}
+.form .btns{display:grid;grid-template-columns:1fr 2fr;gap:10px;margin-top:18px}
+.form .btns button{border:0;border-radius:12px;padding:13px;font-weight:650;cursor:pointer;background:var(--bg2)}
+.form .btns .primary{background:var(--btn);color:var(--btn-fg)}
+.form .btns button:disabled{opacity:.6}
+.stat{font-size:13.5px;color:var(--muted);margin:0 2px 12px}
+.stat b{color:var(--fg);font-family:var(--data)}
+.gate{position:absolute;inset:0;display:grid;place-content:center;text-align:center;padding:24px;gap:8px;background:var(--bg);z-index:1000}
+.gate[hidden]{display:none}
+.gate h2{margin:0;font-size:18px} .gate p{margin:0;color:var(--muted);max-width:34ch}
+.gate code{font-family:var(--data);background:var(--bg2);padding:2px 6px;border-radius:6px}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><h1>Road Watch</h1><small id="updated">Loading…</small></div>
+  <nav class="tabs" role="tablist">
+    <button class="tab" role="tab" data-v="map" aria-selected="true">Map</button>
+    <button class="tab" role="tab" data-v="trucks" aria-selected="false">Trucks</button>
+    <button class="tab" role="tab" data-v="groups" aria-selected="false">Groups</button>
+    <button class="tab" role="tab" data-v="alerts" aria-selected="false">Alerts <span class="n" id="openN" hidden></span></button>
+    <button class="tab" role="tab" data-v="evidence" aria-selected="false">Evidence</button>
+  </nav>
+</header>
+<main>
+  <section class="view" id="v-map">
+    <div id="map" aria-label="Map of trucks and restricted roads"></div>
+    <div class="legend"><span><i></i>No driving</span><span><i class="p"></i>No parking</span></div>
+    <button class="fab" id="fit">Show all trucks</button>
+  </section>
+  <section class="view pad" id="v-trucks" hidden>
+    <button class="addbtn" id="addTruck">+ Add truck</button>
+    <div class="list" id="trucks"></div>
+  </section>
+  <section class="view pad" id="v-groups" hidden>
+    <p class="stat" id="groupStat"></p>
+    <div class="list" id="groups"></div>
+  </section>
+  <section class="view pad" id="v-alerts" hidden>
+    <div class="filters">
+      <div class="row">
+        <select id="period" aria-label="Period"><option value="1">Last 24 hours</option><option value="7" selected>Last 7 days</option><option value="30">Last 30 days</option></select>
+        <select id="ftruck" aria-label="Truck"><option value="">All trucks</option></select>
+      </div>
+      <div class="chips" id="kinds">
+        <button class="chip" data-k="" aria-pressed="true">All</button>
+        <button class="chip" data-k="approaching,inside" aria-pressed="false">Restricted road</button>
+        <button class="chip" data-k="parked" aria-pressed="false">Parking</button>
+        <button class="chip" data-k="avoided,exited" aria-pressed="false">U-turn / left</button>
+        <button class="chip" data-k="tracker_lost,tracker_error" aria-pressed="false">Tracking</button>
+        <button class="chip" data-k="briefing,departure" aria-pressed="false">Briefings</button>
+      </div>
+      <label class="row sub"><input type="checkbox" id="repeats"> Show 5-minute repeats</label>
+    </div>
+    <div id="alerts"></div>
+  </section>
+  <section class="view pad" id="v-evidence" hidden>
+    <p class="sub" style="margin:0 0 12px">Every time a truck came near a restricted road. Open one to see its GPS trail and send the PDF report to yourself in Telegram, ready to forward to Amazon.</p>
+    <div class="list" id="events"></div>
+  </section>
+  <section class="sheet" id="sheet" hidden>
+    <button class="close" id="closeSheet">Close</button>
+    <div id="evmap"></div>
+    <div class="body" id="evbody"></div>
+  </section>
+  <form class="form" id="truckForm" hidden novalidate>
+    <h2 id="formTitle">Add truck</h2>
+    <p class="sub" style="margin:0">Alerts for this truck go to the group you choose.</p>
+    <label>Name <small>as it should appear in alerts</small><input id="fName" maxlength="80" placeholder="Adam 1001 truck" autocomplete="off" required></label>
+    <label id="linkLabel">Tracking link <small>from the ELD (Five ELD now; Motive and Samsara coming)</small><textarea id="fLink" placeholder="https://app.fiveeld.com/#/tracking?trackingToken=…" autocomplete="off" spellcheck="false"></textarea></label>
+    <label>Driver phone <small>optional, shown in alerts</small><input id="fPhone" type="tel" placeholder="+1 555 123 4567" autocomplete="off"></label>
+    <label>Group for alerts<select id="fGroup"></select></label>
+    <div class="err" id="fErr" role="alert"></div>
+    <div class="btns"><button type="button" id="fCancel">Cancel</button><button type="submit" class="primary" id="fSave">Save</button></div>
+  </form>
+  <div class="gate" id="gate" hidden></div>
+</main>
+<script>
+const API = "https://yjfcbxocmotfdjdahqsq.supabase.co/functions/v1/panel-api";
+const tg = window.Telegram && window.Telegram.WebApp;
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+let TZ = "America/Chicago", trucks = [], groups = [], zones = null, map, truckLayer, evMap, currentEvent = null;
+
+// ---------------------------------------------------------------- formatting
+const fmt = (iso, o) => iso ? new Intl.DateTimeFormat("en-US", { timeZone: TZ, ...o }).format(new Date(iso)) : "–";
+const time = (iso) => fmt(iso, { hour: "2-digit", minute: "2-digit", hour12: false });
+const dayName = (iso) => fmt(iso, { weekday: "short", month: "short", day: "numeric" });
+const full = (iso) => fmt(iso, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false, timeZoneName: "short" });
+const ago = (iso) => {
+  if (!iso) return "no GPS yet";
+  const m = Math.round((Date.now() - new Date(iso)) / 60000);
+  return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`;
+};
+const dist = (m) => m == null ? "–" : m < 300 ? `${Math.round(m * 3.28084)} ft` : `${(m / 1609.344).toFixed(1)} mi`;
+function status(t) {
+  if (t.failures >= 5) return "broken";
+  if (!t.at) return "off";
+  const m = (Date.now() - new Date(t.at)) / 60000;
+  return m <= 5 ? "live" : m <= 120 ? "quiet" : "off";
+}
+const STATUS = { live: "Live", quiet: "No GPS for a while", off: "Offline", broken: "Tracking link broken" };
+const KIND = {
+  approaching: ["Approaching restricted road", "p-road"], inside: ["On restricted road", "p-road"],
+  exited: ["Left restricted road", "p-muted"], avoided: ["Did not enter", "p-ok"],
+  parked: ["Parked on no-parking road", "p-park"], parked_cleared: ["Left no-parking road", "p-muted"],
+  briefing: ["Site briefing sent", "p-muted"], departure: ["Departure reminder", "p-muted"],
+  tracker_lost: ["GPS lost near site", "p-park"], tracker_error: ["Tracking link broken", "p-road"],
+};
+const STATE = {
+  approaching: ["Approaching", "p-road"], inside: ["On the road", "p-road"], parked: ["Parked", "p-park"],
+  avoided: ["Did not enter", "p-ok"], exited: ["Entered, then left", "p-park"],
+};
+
+// ---------------------------------------------------------------- API
+async function api(action, args = {}) {
+  const res = await fetch(API, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-telegram-init-data": tg ? tg.initData : "" },
+    body: JSON.stringify({ action, ...args }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) { const e = new Error(body.error || `HTTP ${res.status}`); e.code = body.error; e.body = body; throw e; }
+  return body;
+}
+function gate(title, text) {
+  $("#gate").innerHTML = `<h2>${esc(title)}</h2><p>${text}</p>`;
+  $("#gate").hidden = false;
+}
+
+// ---------------------------------------------------------------- tabs
+let view = "map";
+function show(v) {
+  view = v;
+  document.querySelectorAll(".tab").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.v === v)));
+  for (const id of ["map", "trucks", "groups", "alerts", "evidence"]) $("#v-" + id).hidden = id !== v;
+  if (v === "groups") loadGroups();
+  if (v === "map" && map) setTimeout(() => map.invalidateSize(), 0);
+  if (v === "alerts") loadAlerts();
+  if (v === "evidence") loadEvents();
+}
+document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () => { tg?.HapticFeedback?.selectionChanged(); show(b.dataset.v); }));
+
+// ---------------------------------------------------------------- map
+const TILES = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+const ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+function zoneStyle(z) {
+  if (z.rule === "no_parking") return { color: "#c27a0a", weight: 4, dashArray: "8 6", opacity: .95 };
+  if (z.rule === "no_entry_and_no_parking") return { color: "#d13a2f", weight: 5, dashArray: "14 4", opacity: .95 };
+  return { color: "#d13a2f", weight: 5, opacity: .9 };
+}
+function drawZones(target, list) {
+  return L.geoJSON({ type: "FeatureCollection", features: list.map((z) => ({ type: "Feature", properties: z, geometry: z.geom })) },
+    { style: (f) => zoneStyle(f.properties),
+      onEachFeature: (f, l) => l.bindPopup(`<b>${esc(f.properties.name)}</b><br>${esc(f.properties.facility)} · ${f.properties.rule === "no_parking" ? "No parking or idling" : f.properties.rule === "no_entry" ? "No driving" : "No driving or parking"}${f.properties.scope === "facility_trips" ? "<br><span style='color:#6b737b'>Warns trucks going to or from this site</span>" : ""}`) }).addTo(target);
+}
+function initMap() {
+  map = L.map("map", { zoomControl: false, attributionControl: true }).setView([39.5, -86], 5);
+  L.tileLayer(TILES, { maxZoom: 19, attribution: ATTR }).addTo(map);
+  L.control.zoom({ position: "topright" }).addTo(map);
+  truckLayer = L.layerGroup().addTo(map);
+}
+let facilityLayer;
+function drawFacilities() {
+  facilityLayer = L.layerGroup();
+  for (const f of zones.facilities) {
+    L.marker([f.lat, f.lng], { icon: L.divIcon({ className: "", html: `<div class="fm">${esc(f.code)}</div>`, iconSize: [0, 0] }), interactive: false }).addTo(facilityLayer);
+  }
+  const toggle = () => map.getZoom() >= 9 ? facilityLayer.addTo(map) : facilityLayer.remove();
+  map.on("zoomend", toggle); toggle();
+}
+function truckIcon(t) {
+  const st = status(t), cls = t.open_event ? "alert" : st === "live" ? "" : st === "broken" ? "off" : st;
+  return L.divIcon({ className: "", html: `<div class="tm ${cls}"><b></b><span>${esc(t.name ?? t.truck_number ?? "?")}</span></div>`, iconSize: [0, 0] });
+}
+function drawTrucks() {
+  truckLayer.clearLayers();
+  for (const t of trucks) {
+    if (t.lat == null) continue;
+    const ev = t.open_event;
+    L.marker([t.lat, t.lng], { icon: truckIcon(t), zIndexOffset: ev ? 1000 : 0 }).bindPopup(
+      `<b>${esc(t.name ?? t.truck_number)}</b><br>${esc(t.driver ?? "")}<br>` +
+      (ev ? `<span style="color:#d13a2f;font-weight:600">${esc(STATE[ev.state]?.[0] ?? ev.state)}: ${esc(ev.zone)} (${esc(ev.facility)})</span><br>` : "") +
+      `${t.speed != null ? Math.round(t.speed) + " mph · " : ""}${ago(t.at)}<br><span style="color:#6b737b">${esc(t.address || "")}</span>` +
+      (t.phone ? `<br>📞 ${esc(t.phone)}` : "")).addTo(truckLayer);
+  }
+}
+function fitTrucks() {
+  const pts = trucks.filter((t) => t.lat != null).map((t) => [t.lat, t.lng]);
+  if (pts.length === 1) map.setView(pts[0], 12);
+  else if (pts.length) map.fitBounds(pts, { padding: [40, 40], maxZoom: 13 });
+}
+$("#fit").addEventListener("click", fitTrucks);
+
+// ---------------------------------------------------------------- trucks list
+const PROVIDER = { fiveeld: "Five ELD", motive: "Motive", samsara: "Samsara", other: "ELD" };
+function renderTrucks() {
+  const el = $("#trucks");
+  if (!trucks.length) { el.innerHTML = `<div class="empty"><b>No trucks yet</b>Press “Add truck”, give it a name and paste its ELD tracking link.</div>`; return; }
+  const order = { broken: 0, off: 2, quiet: 1, live: 3 };
+  const list = [...trucks].sort((a, b) => (b.open_event ? 1 : 0) - (a.open_event ? 1 : 0) || order[status(a)] - order[status(b)]);
+  el.innerHTML = list.map((t) => {
+    const st = status(t), ev = t.open_event;
+    const issues = [!t.has_group && "no group chosen — alerts go nowhere", !t.phone && "no driver phone"].filter(Boolean);
+    return `<article class="card">
+      <div class="row"><span class="dot ${st === "live" ? "" : st}" title="${STATUS[st]}"></span><span class="num">${esc(t.name ?? t.truck_number ?? "?")}</span>
+        ${ev ? `<span class="pill ${STATE[ev.state]?.[1] ?? "p-road"}">${esc(STATE[ev.state]?.[0] ?? ev.state)} · ${esc(ev.facility)}</span>` : ""}</div>
+      ${ev ? `<div class="warn">${esc(ev.zone)}${ev.acknowledged_by ? ` · informed by ${esc(ev.acknowledged_by)}` : " · nobody has informed the driver yet"}</div>` : ""}
+      <div class="sub">${STATUS[st]} · ${ago(t.at)}${t.speed != null && st === "live" ? ` · ${Math.round(t.speed)} mph` : ""}</div>
+      ${t.address ? `<div class="sub">📍 ${esc(t.address)}</div>` : ""}
+      <div class="sub">${[t.driver && "👤 " + esc(t.driver), t.truck_number && "#" + esc(t.truck_number), t.group_title && "👥 " + esc(t.group_title), PROVIDER[t.provider] ?? "",
+        t.link_expires_at ? "link valid to " + fmt(t.link_expires_at, { year: "numeric", month: "short", day: "numeric" }) : ""].filter(Boolean).join(" · ")}</div>
+      ${issues.length ? `<div class="warn">⚠ ${issues.join(" · ")}</div>` : ""}
+      ${st === "broken" ? `<div class="warn">The tracking link stopped working. Edit the truck and paste a new link.</div>` : ""}
+      <div class="acts">${t.phone ? `<button class="copy" data-copy="${esc(t.phone)}">📞 ${esc(t.phone)}</button>` : ""}
+        ${t.lat != null ? `<button class="copy" data-goto="${t.lat},${t.lng}">Show on map</button>` : ""}
+        <button class="copy" data-edit="${t.id}">Edit</button>
+        <button class="copy danger" data-remove="${t.id}">Remove</button></div>
+    </article>`;
+  }).join("");
+}
+
+// ---------------------------------------------------------------- add / edit truck
+let editing = null;
+const confirmAsk = (text) => new Promise((ok) => tg?.showConfirm ? tg.showConfirm(text, ok) : ok(confirm(text)));
+const tell = (text) => tg?.showAlert ? tg.showAlert(text) : alert(text);
+const ERR = {
+  name_required: "Give the truck a name.",
+  not_a_tracking_link: "This doesn't look like a tracking link. Copy the share/tracking link from the ELD.",
+  unsupported_provider: "This ELD is not connected yet. Send one of its links to the developer to add it.",
+  link_not_working: "The ELD did not answer with this link. Check that it is the live tracking link and that it has not expired.",
+  group_not_found: "The bot is no longer in that group. Pick another one.",
+  truck_not_found: "This truck was removed.",
+};
+async function loadGroupsQuiet() {
+  const g = await api("groups");
+  groups = g.groups;
+  return g;
+}
+async function openForm(t) {
+  editing = t || null;
+  $("#formTitle").textContent = t ? "Edit truck" : "Add truck";
+  $("#fName").value = t ? (t.name ?? "") : "";
+  $("#fLink").value = "";
+  $("#fLink").placeholder = t ? "Leave empty to keep the current link" : "https://app.fiveeld.com/#/tracking?trackingToken=…";
+  $("#fPhone").value = t?.phone ?? "";
+  $("#fErr").textContent = "";
+  $("#truckForm").hidden = false;
+  tg?.BackButton?.show();
+  try { await loadGroupsQuiet(); } catch { /* keep the old list */ }
+  const active = groups.filter((g) => g.active);
+  $("#fGroup").innerHTML = (active.length ? `<option value="">— choose a group —</option>` : `<option value="">Add the bot to a group first</option>`) +
+    active.map((g) => `<option value="${g.chat_id}">${esc(g.title ?? g.chat_id)}</option>`).join("");
+  $("#fGroup").value = t?.group_chat_id && active.some((g) => g.chat_id === t.group_chat_id) ? String(t.group_chat_id) : "";
+  if (!t) $("#fName").focus();
+}
+function closeForm() { $("#truckForm").hidden = true; editing = null; if ($("#sheet").hidden) tg?.BackButton?.hide(); }
+$("#addTruck").addEventListener("click", () => openForm(null));
+$("#fCancel").addEventListener("click", closeForm);
+$("#truckForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const name = $("#fName").value.trim(), link = $("#fLink").value.trim(), group = $("#fGroup").value || null, phone = $("#fPhone").value.trim();
+  if (!name) { $("#fErr").textContent = ERR.name_required; $("#fName").focus(); return; }
+  if (!editing && !link) { $("#fErr").textContent = "Paste the tracking link."; $("#fLink").focus(); return; }
+  if (!group && !(await confirmAsk("No group chosen: this truck's alerts will not go anywhere. Save anyway?"))) return;
+  $("#fSave").disabled = true; $("#fSave").textContent = link ? "Checking the link…" : "Saving…"; $("#fErr").textContent = "";
+  try {
+    if (editing) {
+      if (link) await api("add_truck", { name, link, group, phone });
+      else await api("update_truck", { id: editing.id, name, group, phone });
+    } else {
+      await api("add_truck", { name, link, group, phone });
+    }
+    tg?.HapticFeedback?.notificationOccurred("success");
+    closeForm();
+    await refreshTrucks();
+  } catch (err) {
+    $("#fErr").textContent = ERR[err.code] ?? ("Could not save: " + err.message);
+    tg?.HapticFeedback?.notificationOccurred("error");
+  } finally { $("#fSave").disabled = false; $("#fSave").textContent = "Save"; }
+});
+
+// ---------------------------------------------------------------- groups
+async function loadGroups() {
+  const el = $("#groups");
+  el.innerHTML = `<div class="empty">Loading…</div>`;
+  try {
+    const g = await loadGroupsQuiet();
+    $("#groupStat").innerHTML = `The bot is in <b>${g.active}</b> group${g.active === 1 ? "" : "s"}.`;
+    if (!groups.length) { el.innerHTML = `<div class="empty"><b>No groups yet</b>Add the bot to a driver's Telegram group; it will show up here.</div>`; return; }
+    el.innerHTML = groups.map((x) => `<article class="card">
+      <div class="row"><span class="num" style="font-family:var(--ui)">${esc(x.title ?? x.chat_id)}</span>${x.active ? "" : `<span class="pill p-muted">Removed</span>`}</div>
+      <div class="sub">${x.active ? `Added ${full(x.added_at)}${x.added_by ? " by " + esc(x.added_by) : ""}` : `Removed ${full(x.left_at)}`}</div>
+      <div class="sub">${x.trucks.length ? "🚛 " + x.trucks.map(esc).join(", ") : "No truck attached"}</div>
+      ${x.active ? `<div class="acts"><button class="copy danger" data-leave="${x.chat_id}" data-title="${esc(x.title ?? "")}">Remove bot from group</button></div>` : ""}
+    </article>`).join("");
+  } catch (err) { el.innerHTML = `<div class="empty"><b>Could not load groups</b>${esc(err.message)}</div>`; }
+}
+
+document.addEventListener("click", async (e) => {
+  const c = e.target.closest("[data-copy]");
+  if (c) {
+    try { await navigator.clipboard.writeText(c.dataset.copy); tg?.HapticFeedback?.notificationOccurred("success"); c.textContent = "Copied"; setTimeout(() => (c.textContent = "📞 " + c.dataset.copy), 1200); } catch { /* selection fallback not needed for a phone number */ }
+  }
+  const g = e.target.closest("[data-goto]");
+  if (g) { const [la, lo] = g.dataset.goto.split(",").map(Number); show("map"); map.setView([la, lo], 14); }
+  const ed = e.target.closest("[data-edit]");
+  if (ed) openForm(trucks.find((t) => t.id === ed.dataset.edit));
+  const rm = e.target.closest("[data-remove]");
+  if (rm) {
+    const t = trucks.find((x) => x.id === rm.dataset.remove);
+    if (!(await confirmAsk(`Stop tracking ${t?.name ?? "this truck"}? Its GPS history stays for disputes.`))) return;
+    try { await api("remove_truck", { id: rm.dataset.remove }); await refreshTrucks(); } catch (err) { tell(ERR[err.code] ?? err.message); }
+  }
+  const lv = e.target.closest("[data-leave]");
+  if (lv) {
+    if (!(await confirmAsk(`Remove the bot from “${lv.dataset.title || "this group"}”? Trucks attached to it will stop getting alerts.`))) return;
+    try { await api("leave_group", { chat_id: Number(lv.dataset.leave) }); await loadGroups(); await refreshTrucks(); } catch (err) { tell(err.message); }
+  }
+});
+
+// ---------------------------------------------------------------- alerts
+let kindFilter = "";
+document.querySelectorAll("#kinds .chip").forEach((b) => b.addEventListener("click", () => {
+  kindFilter = b.dataset.k;
+  document.querySelectorAll("#kinds .chip").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+  loadAlerts();
+}));
+["period", "ftruck"].forEach((id) => $("#" + id).addEventListener("change", loadAlerts));
+$("#repeats").addEventListener("change", loadAlerts);
+let alertsSeq = 0;
+async function loadAlerts() {
+  const seq = ++alertsSeq, el = $("#alerts");
+  el.innerHTML = `<div class="empty">Loading alerts…</div>`;
+  try {
+    const days = Number($("#period").value);
+    const { alerts } = await api("alerts", { from: new Date(Date.now() - days * 864e5).toISOString(), truck: $("#ftruck").value || null, kinds: kindFilter ? kindFilter.split(",") : null, limit: 500 });
+    if (seq !== alertsSeq) return;
+    const list = $("#repeats").checked ? alerts : alerts.filter((a) => !a.repeat);
+    if (!list.length) { el.innerHTML = `<div class="empty"><b>No alerts in this period</b>Nothing matched the filters.</div>`; return; }
+    let lastDay = "";
+    el.innerHTML = list.map((a) => {
+      const [label, cls] = KIND[a.kind] ?? [a.kind, "p-muted"];
+      const d = dayName(a.at), head = d !== lastDay ? `<div class="day">${d}</div>` : "";
+      lastDay = d;
+      const needsAck = ["approaching", "inside", "parked", "tracker_lost", "tracker_error"].includes(a.kind);
+      return `${head}<div class="al"><time>${time(a.at)}</time>
+        <div class="what"><span class="pill ${cls}">${label}${a.repeat ? ` · ${a.repeat + 1}×` : ""}</span><b class="num" style="font-size:14px">${esc(a.truck_number ?? "")}</b><span class="sub">${esc(a.driver ?? "")}</span></div>
+        <div class="sub">${[a.zone, a.facility].filter(Boolean).map(esc).join(" · ")}${a.kind === "avoided" && a.turned_back ? " · U-turn" : ""}
+          ${needsAck ? (a.acknowledged_by ? `<div class="ack yes">✓ ${esc(a.acknowledged_by)} informed the driver at ${time(a.acknowledged_at)}</div>` : `<div class="ack no">Nobody pressed "Informed the driver"</div>`) : ""}</div></div>`;
+    }).join("");
+  } catch (err) { if (seq === alertsSeq) el.innerHTML = `<div class="empty"><b>Could not load alerts</b>${esc(err.message)}</div>`; }
+}
+
+// ---------------------------------------------------------------- evidence
+async function loadEvents() {
+  const el = $("#events");
+  el.innerHTML = `<div class="empty">Loading…</div>`;
+  try {
+    const { events } = await api("events");
+    if (!events.length) { el.innerHTML = `<div class="empty"><b>No episodes in the last 30 days</b>When a truck comes near a restricted road it shows up here.</div>`; return; }
+    el.innerHTML = events.map((e) => {
+      const [label, cls] = STATE[e.state] ?? [e.state, "p-muted"];
+      return `<button class="card ev" data-ev="${e.id}">
+        <div class="row"><span class="pill ${cls}">${label}${e.turned_back ? " · U-turn" : ""}</span><span class="num">${esc(e.truck_number ?? "")}</span><span class="sub">${esc(e.driver ?? "")}</span></div>
+        <div>${esc(e.zone)} <span class="sub">· ${esc(e.facility)}</span></div>
+        <div class="sub">${full(e.opened_at)} · closest ${dist(e.closest_m)}${e.acknowledged_by ? ` · informed by ${esc(e.acknowledged_by)}` : ""}</div>
+      </button>`;
+    }).join("");
+  } catch (err) { el.innerHTML = `<div class="empty"><b>Could not load</b>${esc(err.message)}</div>`; }
+}
+$("#events").addEventListener("click", (e) => { const b = e.target.closest("[data-ev]"); if (b) openEvent(b.dataset.ev); });
+
+async function openEvent(id) {
+  $("#sheet").hidden = false;
+  $("#evbody").innerHTML = `<div class="empty">Loading GPS trail…</div>`;
+  tg?.BackButton?.show();
+  try {
+    const d = await api("event", { id });
+    currentEvent = d;
+    const e = d.event, [label, cls] = STATE[e.state] ?? [e.state, "p-muted"];
+    if (!evMap) { evMap = L.map("evmap", { zoomControl: false }); L.tileLayer(TILES, { maxZoom: 19, attribution: ATTR }).addTo(evMap); }
+    evMap.setView([e.facility_lat, e.facility_lng], 14);
+    evMap.eachLayer((l) => { if (!(l instanceof L.TileLayer)) evMap.removeLayer(l); });
+    const zl = drawZones(evMap, [{ name: e.zone, facility: e.facility, rule: e.rule, scope: "any", geom: d.zone_geom }]);
+    const ll = d.points.map((p) => [p.lat, p.lng]);
+    if (ll.length) {
+      L.polyline(ll, { color: "#2a6fd6", weight: 3 }).addTo(evMap);
+      d.points.forEach((p, i) => L.circleMarker([p.lat, p.lng], { radius: i === 0 || i === ll.length - 1 ? 6 : 4, color: "#fff", weight: 1.5, fillColor: "#2a6fd6", fillOpacity: 1 })
+        .bindTooltip(`${time(p.at)} · ${p.speed != null ? Math.round(p.speed) + " mph · " : ""}${dist(p.zone_m)} from road`).addTo(evMap));
+    }
+    setTimeout(() => { evMap.invalidateSize(); ll.length ? evMap.fitBounds(L.latLngBounds(ll).extend(zl.getBounds()), { padding: [24, 24], maxZoom: 17 }) : evMap.fitBounds(zl.getBounds()); }, 30);
+    const ack = e.acknowledged_by ? `${esc(e.acknowledged_by)} at ${full(e.acknowledged_at)}` : "Not recorded";
+    const tl = d.alerts.filter((a) => !a.repeat || a.acknowledged_by).map((a) => `<div><time>${time(a.at)}</time><span>${esc(KIND[a.kind]?.[0] ?? a.kind)}${a.acknowledged_by ? ` · informed by ${esc(a.acknowledged_by)}` : ""}</span></div>`).join("");
+    $("#evbody").innerHTML = `
+      <div class="row"><span class="pill ${cls}">${label}${e.turned_back ? " · U-turn" : ""}</span><span class="sub">${full(e.opened_at)}</span></div>
+      <h2>${esc(e.zone)}</h2>
+      <dl class="facts">
+        <dt>Truck</dt><dd class="num" style="font-size:14px">${esc(e.truck_number ?? "")}</dd>
+        <dt>Driver</dt><dd>${esc(e.driver ?? "–")}</dd>
+        <dt>Site</dt><dd>${esc(e.facility)}</dd>
+        <dt>Closest</dt><dd>${dist(e.closest_m)} at ${time(e.closest_at)}</dd>
+        ${e.entered_at ? `<dt>Entered</dt><dd>${time(e.entered_at)}${e.exited_at ? ` · left ${time(e.exited_at)}` : ""}</dd>` : ""}
+        <dt>Informed</dt><dd>${ack}</dd>
+        <dt>GPS fixes</dt><dd>${d.points.length} (20 min before and after)</dd>
+      </dl>
+      ${tl ? `<div class="tl">${tl}</div>` : ""}
+      ${tg?.MainButton ? "" : `<button class="sendbtn" id="sendPdf">Send PDF report to my Telegram</button>`}`;
+    if (tg?.MainButton) { tg.MainButton.setText("Send PDF report to my Telegram"); tg.MainButton.show(); }
+    else $("#sendPdf").addEventListener("click", sendPdf);
+  } catch (err) { $("#evbody").innerHTML = `<div class="empty"><b>Could not load this episode</b>${esc(err.message)}</div>`; }
+}
+async function sendPdf() {
+  if (!currentEvent) return;
+  tg?.MainButton?.showProgress?.();
+  try {
+    await api("event_pdf", { id: currentEvent.event.id });
+    tg?.HapticFeedback?.notificationOccurred("success");
+    const msg = "The PDF report is in your chat with the bot. Forward it to Amazon from there.";
+    tg?.showAlert ? tg.showAlert(msg) : alert(msg);
+  } catch (err) {
+    const msg = err.code === "open_bot_first" ? "Open a chat with the bot and press Start first, then try again." : "Could not make the PDF: " + err.message;
+    tg?.showAlert ? tg.showAlert(msg) : alert(msg);
+  } finally { tg?.MainButton?.hideProgress?.(); }
+}
+function closeSheet() {
+  $("#sheet").hidden = true; currentEvent = null;
+  tg?.BackButton?.hide(); tg?.MainButton?.hide();
+}
+$("#closeSheet").addEventListener("click", closeSheet);
+tg?.BackButton?.onClick(() => { if (!$("#truckForm").hidden) closeForm(); else closeSheet(); });
+tg?.MainButton?.onClick(sendPdf);
+
+// ---------------------------------------------------------------- refresh loop
+async function refreshTrucks() {
+  const { trucks: t } = await api("trucks");
+  trucks = t;
+  drawTrucks();
+  renderTrucks();
+  const open = trucks.filter((x) => x.open_event && !x.open_event.acknowledged_by).length;
+  $("#openN").textContent = open; $("#openN").hidden = !open;
+  const sel = $("#ftruck"), keep = sel.value;
+  sel.innerHTML = `<option value="">All trucks</option>` + trucks.map((x) => `<option value="${x.id}">${esc(x.name ?? x.truck_number ?? "?")}</option>`).join("");
+  sel.value = keep;
+  $("#updated").textContent = `Updated ${time(new Date().toISOString())}`;
+}
+
+async function start() {
+  if (tg) {
+    tg.ready(); tg.expand();
+    document.body.classList.add(tg.colorScheme === "dark" ? "dark" : "light");
+    tg.onEvent?.("themeChanged", () => { document.body.classList.toggle("dark", tg.colorScheme === "dark"); document.body.classList.toggle("light", tg.colorScheme !== "dark"); });
+  }
+  if (!tg || !tg.initData) {
+    gate("Open Road Watch from Telegram", "This app works inside the NUR CARGO bot. Open the bot and press <b>📱 Ilova</b>.");
+    return;
+  }
+  initMap();
+  try {
+    const me = await api("me");
+    TZ = me.tz || TZ;
+  } catch (err) {
+    if (err.code === "not_staff") gate("Send the password first", "Close this window, send the password to the bot in a private chat, then open the app again.");
+    else if (err.code === "not_signed_in") gate("Please reopen the panel", "Your Telegram sign-in expired. Close this window and open the panel from the bot again.");
+    else gate("Road Watch is not reachable", esc(err.message));
+    return;
+  }
+  try {
+    const [z] = await Promise.all([api("zones"), refreshTrucks()]);
+    zones = z;
+    drawZones(map, zones.zones.filter((x) => x.active));
+    drawFacilities();
+    if (trucks.some((t) => t.lat != null)) fitTrucks(); else map.setView([39.5, -86], 5);
+  } catch (err) { $("#updated").textContent = "Could not load: " + err.message; }
+  setInterval(() => { if (!document.hidden) refreshTrucks().catch(() => { $("#updated").textContent = "Offline, retrying…"; }); }, 30000);
+}
+start();
+</script>
+</body>
+</html>

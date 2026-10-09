@@ -55,13 +55,18 @@ main{flex:1;min-height:0;position:relative}
 .legend{position:absolute;left:12px;bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:500;background:var(--bg);border-radius:10px;padding:7px 10px;font-size:11.5px;color:var(--muted);box-shadow:0 2px 10px rgba(0,0,0,.12);display:grid;gap:3px}
 .legend i{display:inline-block;width:18px;height:0;border-top:4px solid var(--road);vertical-align:middle;margin-right:6px}
 .legend i.p{border-top:3px dashed var(--park)}
+.legend i.g{border-top:4px solid var(--ok)}
+.legend i.a{height:10px;border:2px solid var(--road);background:var(--road-bg);border-radius:2px}
 @media (prefers-color-scheme: dark){ .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.85) contrast(.9)} }
 body.dark .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.85) contrast(.9)}
 body.light .leaflet-tile-pane{filter:none}
 .tm{display:flex;align-items:center;gap:5px;transform:translate(-9px,-9px)}
 .tm b{width:18px;height:18px;border-radius:50%;background:var(--ok);border:3px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35);flex:none}
 .tm span{font:600 12px/1 var(--data);background:#fff;color:#111;border-radius:6px;padding:4px 6px;box-shadow:0 1px 4px rgba(0,0,0,.25);white-space:nowrap}
-.tm.quiet b{background:var(--quiet)} .tm.off b{background:var(--off)}
+.tm.quiet b{background:var(--quiet)} .tm.off b{background:var(--off)} .tm.stopped b{background:#3b6fb6}
+.tm i{position:absolute;left:3px;top:-9px;width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-bottom:9px solid var(--ok);transform-origin:6px 18px;filter:drop-shadow(0 0 1px #fff)}
+.tm{position:relative}
+.tm span em{font-style:normal;color:#1d8a6b;margin-left:4px}
 .tm.alert b{background:var(--road);animation:pulse 1.4s ease-out infinite}
 @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(209,58,47,.55)}100%{box-shadow:0 0 0 14px rgba(209,58,47,0)}}
 @media (prefers-reduced-motion: reduce){.tm.alert b{animation:none}}
@@ -74,7 +79,8 @@ body.light .leaflet-tile-pane{filter:none}
 .num{font:650 16px/1.2 var(--data)}
 .sub{color:var(--muted);font-size:13px;min-width:0;overflow-wrap:anywhere}
 .dot{width:10px;height:10px;border-radius:50%;flex:none;background:var(--ok)}
-.dot.quiet{background:var(--quiet)} .dot.off{background:var(--off)} .dot.broken{background:var(--road)}
+.dot.quiet{background:var(--quiet)} .dot.off{background:var(--off)} .dot.broken{background:var(--road)} .dot.stopped{background:#3b6fb6}
+.st{font-size:13px;font-weight:600} .st.moving{color:var(--ok)} .st.stopped{color:#3b6fb6} .st.quiet{color:var(--quiet)} .st.off,.st.broken{color:var(--muted)} .st.broken{color:var(--road)}
 .pill{font-size:11.5px;font-weight:650;letter-spacing:.02em;border-radius:6px;padding:2px 7px;white-space:nowrap}
 .p-road{color:var(--road);background:var(--road-bg)} .p-park{color:var(--park);background:var(--park-bg)}
 .p-ok{color:var(--ok);background:var(--ok-bg)} .p-muted{color:var(--muted);background:color-mix(in srgb,var(--muted) 14%,transparent)}
@@ -143,7 +149,7 @@ select{font:inherit;font-size:13.5px;color:var(--fg);background:var(--bg);border
 <main>
   <section class="view" id="v-map">
     <div id="map" aria-label="Map of trucks and restricted roads"></div>
-    <div class="legend"><span><i></i>No driving</span><span><i class="p"></i>No parking</span></div>
+    <div class="legend"><span><i></i>No driving</span><span><i class="a"></i>No-entry area</span><span><i class="p"></i>No parking</span><span><i class="g"></i>Truck route</span></div>
     <button class="fab" id="fit">Show all trucks</button>
   </section>
   <section class="view pad" id="v-trucks" hidden>
@@ -218,6 +224,23 @@ function status(t) {
   return m <= 5 ? "live" : m <= 120 ? "quiet" : "off";
 }
 const STATUS = { live: "Live", quiet: "No GPS for a while", off: "Offline", broken: "Tracking link broken" };
+const span = (iso) => {
+  const m = Math.max(0, Math.round((Date.now() - new Date(iso)) / 60000));
+  return m < 60 ? `${m} min` : m < 1440 ? `${Math.floor(m / 60)} h ${m % 60 ? (m % 60) + " min" : ""}`.trim() : `${Math.round(m / 1440)} d`;
+};
+// Moving / stopped / no signal. ELDs often go quiet while a truck is parked, so a quiet truck whose
+// last speed was ~0 counts as stopped (for up to 12 h), not as lost.
+function motion(t) {
+  if (t.failures >= 5) return { k: "broken", label: "Tracking link broken" };
+  if (!t.at) return { k: "off", label: "No GPS yet" };
+  const age = (Date.now() - new Date(t.at)) / 60000, v = t.speed == null ? null : Math.round(t.speed);
+  if (age <= 5 && v != null && v > 3) return { k: "moving", label: `Moving · ${v} mph`, mph: v };
+  if ((age <= 5 && (v ?? 0) <= 3) || (age <= 720 && v != null && v <= 3))
+    return { k: "stopped", label: `Stopped · ${span(t.stopped_since || t.at)}` };
+  if (age <= 120) return { k: "quiet", label: `No signal · ${span(t.at)}` };
+  return { k: "off", label: `Offline · ${span(t.at)}` };
+}
+const MOTION_ORDER = { moving: 0, stopped: 1, quiet: 2, broken: 3, off: 4 };
 const KIND = {
   approaching: ["Approaching restricted road", "p-road"], inside: ["On restricted road", "p-road"],
   exited: ["Left restricted road", "p-muted"], avoided: ["Did not enter", "p-ok"],
@@ -263,6 +286,7 @@ document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () 
 const TILES = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
 const ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
 function zoneStyle(z) {
+  if (z.geom && /Polygon/.test(z.geom.type)) return { color: "#d13a2f", weight: 2, opacity: .9, fillColor: "#d13a2f", fillOpacity: .16 };
   if (z.rule === "no_parking") return { color: "#c27a0a", weight: 4, dashArray: "8 6", opacity: .95 };
   if (z.rule === "no_entry_and_no_parking") return { color: "#d13a2f", weight: 5, dashArray: "14 4", opacity: .95 };
   return { color: "#d13a2f", weight: 5, opacity: .9 };
@@ -271,6 +295,12 @@ function drawZones(target, list) {
   return L.geoJSON({ type: "FeatureCollection", features: list.map((z) => ({ type: "Feature", properties: z, geometry: z.geom })) },
     { style: (f) => zoneStyle(f.properties),
       onEachFeature: (f, l) => l.bindPopup(`<b>${esc(f.properties.name)}</b><br>${esc(f.properties.facility)} · ${f.properties.rule === "no_parking" ? "No parking or idling" : f.properties.rule === "no_entry" ? "No driving" : "No driving or parking"}${f.properties.scope === "facility_trips" ? "<br><span style='color:#6b737b'>Warns trucks going to or from this site</span>" : ""}`) }).addTo(target);
+}
+function drawRoutes(target, list) {
+  return L.geoJSON({ type: "FeatureCollection", features: list.map((r) => ({ type: "Feature", properties: r, geometry: r.geom })) },
+    { style: () => ({ color: "#1d8a6b", weight: 5, opacity: .85 }),
+      onEachFeature: (f, l) => l.bindPopup(`<b>✅ ${esc(f.properties.name)}</b><br>${esc(f.properties.facility)} · commercial-friendly route` +
+        (f.properties.instructions ? `<br><span style="color:#6b737b">${esc(f.properties.instructions).replace(/\n/g, "<br>")}</span>` : "")) }).addTo(target);
 }
 function initMap() {
   map = L.map("map", { zoomControl: false, attributionControl: true }).setView([39.5, -86], 5);
@@ -288,8 +318,10 @@ function drawFacilities() {
   map.on("zoomend", toggle); toggle();
 }
 function truckIcon(t) {
-  const st = status(t), cls = t.open_event ? "alert" : st === "live" ? "" : st === "broken" ? "off" : st;
-  return L.divIcon({ className: "", html: `<div class="tm ${cls}"><b></b><span>${esc(t.name ?? t.truck_number ?? "?")}</span></div>`, iconSize: [0, 0] });
+  const mo = motion(t), cls = t.open_event ? "alert" : mo.k === "moving" ? "" : mo.k === "broken" ? "off" : mo.k;
+  const arrow = mo.k === "moving" && t.heading != null ? `<i style="transform:rotate(${Math.round(t.heading)}deg)"></i>` : "";
+  const sp = mo.k === "moving" ? `<em>${mo.mph} mph</em>` : "";
+  return L.divIcon({ className: "", html: `<div class="tm ${cls}">${arrow}<b></b><span>${esc(t.name ?? t.truck_number ?? "?")}${sp}</span></div>`, iconSize: [0, 0] });
 }
 function drawTrucks() {
   truckLayer.clearLayers();
@@ -299,7 +331,7 @@ function drawTrucks() {
     L.marker([t.lat, t.lng], { icon: truckIcon(t), zIndexOffset: ev ? 1000 : 0 }).bindPopup(
       `<b>${esc(t.name ?? t.truck_number)}</b><br>${esc(t.driver ?? "")}<br>` +
       (ev ? `<span style="color:#d13a2f;font-weight:600">${esc(STATE[ev.state]?.[0] ?? ev.state)}: ${esc(ev.zone)} (${esc(ev.facility)})</span><br>` : "") +
-      `${t.speed != null ? Math.round(t.speed) + " mph · " : ""}${ago(t.at)}<br><span style="color:#6b737b">${esc(t.address || "")}</span>` +
+      `<b class="st ${motion(t).k}">${esc(motion(t).label)}</b> · ${ago(t.at)}<br><span style="color:#6b737b">${esc(t.address || "")}</span>` +
       (t.phone ? `<br>📞 ${esc(t.phone)}` : "")).addTo(truckLayer);
   }
 }
@@ -315,16 +347,18 @@ const PROVIDER = { fiveeld: "Five ELD", motive: "Motive", samsara: "Samsara", ot
 function renderTrucks() {
   const el = $("#trucks");
   if (!trucks.length) { el.innerHTML = `<div class="empty"><b>No trucks yet</b>Press “Add truck”, give it a name and paste its ELD tracking link.</div>`; return; }
-  const order = { broken: 0, off: 2, quiet: 1, live: 3 };
-  const list = [...trucks].sort((a, b) => (b.open_event ? 1 : 0) - (a.open_event ? 1 : 0) || order[status(a)] - order[status(b)]);
-  el.innerHTML = list.map((t) => {
-    const st = status(t), ev = t.open_event;
+  const list = [...trucks].sort((a, b) => (b.open_event ? 1 : 0) - (a.open_event ? 1 : 0) || MOTION_ORDER[motion(a).k] - MOTION_ORDER[motion(b).k]);
+  const n = (k) => trucks.filter((t) => motion(t).k === k).length;
+  const sum = [["moving", "moving"], ["stopped", "stopped"], ["quiet", "no signal"], ["off", "offline"], ["broken", "link broken"]]
+    .filter(([k]) => n(k)).map(([k, w]) => `<b>${n(k)}</b> ${w}`).join(" · ");
+  el.innerHTML = (sum ? `<p class="stat" style="margin:0">${sum}</p>` : "") + list.map((t) => {
+    const st = status(t), ev = t.open_event, mo = motion(t);
     const issues = [!t.has_group && "no group chosen — alerts go nowhere", !t.phone && "no driver phone"].filter(Boolean);
     return `<article class="card">
-      <div class="row"><span class="dot ${st === "live" ? "" : st}" title="${STATUS[st]}"></span><span class="num">${esc(t.name ?? t.truck_number ?? "?")}</span>
+      <div class="row"><span class="dot ${mo.k === "moving" ? "" : mo.k}" title="${esc(mo.label)}"></span><span class="num">${esc(t.name ?? t.truck_number ?? "?")}</span>
         ${ev ? `<span class="pill ${STATE[ev.state]?.[1] ?? "p-road"}">${esc(STATE[ev.state]?.[0] ?? ev.state)} · ${esc(ev.facility)}</span>` : ""}</div>
       ${ev ? `<div class="warn">${esc(ev.zone)}${ev.acknowledged_by ? ` · informed by ${esc(ev.acknowledged_by)}` : " · nobody has informed the driver yet"}</div>` : ""}
-      <div class="sub">${STATUS[st]} · ${ago(t.at)}${t.speed != null && st === "live" ? ` · ${Math.round(t.speed)} mph` : ""}</div>
+      <div class="sub"><span class="st ${mo.k}">${esc(mo.label)}</span> · last GPS ${ago(t.at)}</div>
       ${t.address ? `<div class="sub">📍 ${esc(t.address)}</div>` : ""}
       <div class="sub">${[t.driver && "👤 " + esc(t.driver), t.truck_number && "#" + esc(t.truck_number), t.group_title && "👥 " + esc(t.group_title), PROVIDER[t.provider] ?? "",
         t.link_expires_at ? "link valid to " + fmt(t.link_expires_at, { year: "numeric", month: "short", day: "numeric" }) : ""].filter(Boolean).join(" · ")}</div>
@@ -586,6 +620,7 @@ async function start() {
   try {
     const [z] = await Promise.all([api("zones"), refreshTrucks()]);
     zones = z;
+    drawRoutes(map, zones.routes || []);
     drawZones(map, zones.zones.filter((x) => x.active));
     drawFacilities();
     if (trucks.some((t) => t.lat != null)) fitTrucks(); else map.setView([39.5, -86], 5);

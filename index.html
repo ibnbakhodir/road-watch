@@ -133,6 +133,9 @@ select{font:inherit;font-size:13.5px;color:var(--fg);background:var(--bg);border
 .gate[hidden]{display:none}
 .gate h2{margin:0;font-size:18px} .gate p{margin:0;color:var(--muted);max-width:34ch}
 .gate code{font-family:var(--data);background:var(--bg2);padding:2px 6px;border-radius:6px}
+code{font-family:var(--data);font-size:.92em;background:var(--bg2);padding:1px 5px;border-radius:5px}
+.card code{background:var(--bg)}
+details summary{cursor:pointer}
 </style>
 </head>
 <body>
@@ -141,6 +144,7 @@ select{font:inherit;font-size:13.5px;color:var(--fg);background:var(--bg);border
   <nav class="tabs" role="tablist">
     <button class="tab" role="tab" data-v="map" aria-selected="true">Map</button>
     <button class="tab" role="tab" data-v="trucks" aria-selected="false">Trucks</button>
+    <button class="tab" role="tab" data-v="companies" aria-selected="false">Companies</button>
     <button class="tab" role="tab" data-v="groups" aria-selected="false">Groups</button>
     <button class="tab" role="tab" data-v="alerts" aria-selected="false">Alerts <span class="n" id="openN" hidden></span></button>
     <button class="tab" role="tab" data-v="evidence" aria-selected="false">Evidence</button>
@@ -154,7 +158,17 @@ select{font:inherit;font-size:13.5px;color:var(--fg);background:var(--bg);border
   </section>
   <section class="view pad" id="v-trucks" hidden>
     <button class="addbtn" id="addTruck">+ Add truck</button>
+    <div class="chips" id="tfilter" style="margin-bottom:10px">
+      <button class="chip" data-f="" aria-pressed="true">All</button>
+      <button class="chip" data-f="nogroup" aria-pressed="false">Without group</button>
+      <button class="chip" data-f="alert" aria-pressed="false">Red / yellow</button>
+    </div>
     <div class="list" id="trucks"></div>
+  </section>
+  <section class="view pad" id="v-companies" hidden>
+    <button class="addbtn" id="addCompany">+ Add company (ELD API)</button>
+    <p class="sub" style="margin:0 0 12px">With the company's ELD API key every truck of the company is tracked automatically. New trucks show up under <b>Trucks → Without group</b>; write <code>/truck 1001</code> in the driver's Telegram group to tie a truck to it.</p>
+    <div class="list" id="companies"></div>
   </section>
   <section class="view pad" id="v-groups" hidden>
     <p class="stat" id="groupStat"></p>
@@ -193,9 +207,23 @@ select{font:inherit;font-size:13.5px;color:var(--fg);background:var(--bg);border
     <label>Name <small>as it should appear in alerts</small><input id="fName" maxlength="80" placeholder="Adam 1001 truck" autocomplete="off" required></label>
     <label id="linkLabel">Tracking link <small>from the ELD (Five ELD now; Motive and Samsara coming)</small><textarea id="fLink" placeholder="https://app.fiveeld.com/#/tracking?trackingToken=…" autocomplete="off" spellcheck="false"></textarea></label>
     <label>Driver phone <small>optional, shown in alerts</small><input id="fPhone" type="tel" placeholder="+1 555 123 4567" autocomplete="off"></label>
-    <label>Group for alerts<select id="fGroup"></select></label>
+    <label>Group for alerts <small>or write <code>/truck name</code> in that group</small><select id="fGroup"></select></label>
+    <label>Company <small>optional</small><select id="fCompany"></select></label>
     <div class="err" id="fErr" role="alert"></div>
     <div class="btns"><button type="button" id="fCancel">Cancel</button><button type="submit" class="primary" id="fSave">Save</button></div>
+  </form>
+  <form class="form" id="companyForm" hidden novalidate>
+    <h2 id="cTitle">Add company</h2>
+    <p class="sub" style="margin:0">Five ELD: main company account → More → <b>API Keys</b> → Add Key.</p>
+    <label>Company name<input id="cName" maxlength="80" placeholder="NUR CARGO INC" autocomplete="off" required></label>
+    <label>USDOT number<input id="cUsdot" inputmode="numeric" maxlength="12" placeholder="1234567" autocomplete="off"></label>
+    <label>API key <small id="cKeyHint">x-api-key from the ELD dashboard</small><input id="cKey" type="password" autocomplete="off" spellcheck="false"></label>
+    <label>Provider token <small id="cTokHint">optional — Five ELD support gives it if the API asks for it</small><input id="cTok" type="password" autocomplete="off" spellcheck="false"></label>
+    <label>Dispatch group <small>alerts for trucks that have no group of their own</small><select id="cGroup"></select></label>
+    <details style="margin-top:14px"><summary class="sub">Advanced</summary>
+      <label>API address<input id="cBase" placeholder="https://api.fiveeld.com" autocomplete="off" spellcheck="false"></label></details>
+    <div class="err" id="cErr" role="alert"></div>
+    <div class="btns"><button type="button" id="cCancel">Cancel</button><button type="submit" class="primary" id="cSave">Save &amp; test</button></div>
   </form>
   <div class="gate" id="gate" hidden></div>
 </main>
@@ -204,7 +232,8 @@ const API = "https://yjfcbxocmotfdjdahqsq.supabase.co/functions/v1/panel-api";
 const tg = window.Telegram && window.Telegram.WebApp;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-let TZ = "America/Chicago", trucks = [], groups = [], zones = null, map, truckLayer, evMap, currentEvent = null;
+let TZ = "America/Chicago", trucks = [], groups = [], companies = [], zones = null, map, truckLayer, evMap, currentEvent = null;
+let truckFilter = "";
 
 // ---------------------------------------------------------------- formatting
 const fmt = (iso, o) => iso ? new Intl.DateTimeFormat("en-US", { timeZone: TZ, ...o }).format(new Date(iso)) : "–";
@@ -246,7 +275,7 @@ const KIND = {
   exited: ["Left restricted road", "p-muted"], avoided: ["Did not enter", "p-ok"],
   parked: ["Parked on no-parking road", "p-park"], parked_cleared: ["Left no-parking road", "p-muted"],
   briefing: ["Site briefing sent", "p-muted"], departure: ["Departure reminder", "p-muted"],
-  tracker_lost: ["GPS lost near site", "p-park"], tracker_error: ["Tracking link broken", "p-road"],
+  tracker_lost: ["GPS lost near site", "p-park"], tracker_error: ["Tracking broken", "p-road"],
 };
 const STATE = {
   approaching: ["Approaching", "p-road"], inside: ["On the road", "p-road"], parked: ["Parked", "p-park"],
@@ -274,8 +303,9 @@ let view = "map";
 function show(v) {
   view = v;
   document.querySelectorAll(".tab").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.v === v)));
-  for (const id of ["map", "trucks", "groups", "alerts", "evidence"]) $("#v-" + id).hidden = id !== v;
+  for (const id of ["map", "trucks", "companies", "groups", "alerts", "evidence"]) $("#v-" + id).hidden = id !== v;
   if (v === "groups") loadGroups();
+  if (v === "companies") loadCompanies();
   if (v === "map" && map) setTimeout(() => map.invalidateSize(), 0);
   if (v === "alerts") loadAlerts();
   if (v === "evidence") loadEvents();
@@ -347,22 +377,30 @@ const PROVIDER = { fiveeld: "Five ELD", motive: "Motive", samsara: "Samsara", ot
 function renderTrucks() {
   const el = $("#trucks");
   if (!trucks.length) { el.innerHTML = `<div class="empty"><b>No trucks yet</b>Press “Add truck”, give it a name and paste its ELD tracking link.</div>`; return; }
-  const list = [...trucks].sort((a, b) => (b.open_event ? 1 : 0) - (a.open_event ? 1 : 0) || MOTION_ORDER[motion(a).k] - MOTION_ORDER[motion(b).k]);
+  const shown = trucks.filter((t) => truckFilter === "nogroup" ? !t.has_group : truckFilter === "alert" ? (t.status === "red" || t.status === "yellow") : true);
+  const list = [...shown].sort((a, b) => (b.open_event ? 1 : 0) - (a.open_event ? 1 : 0) || MOTION_ORDER[motion(a).k] - MOTION_ORDER[motion(b).k]);
   const n = (k) => trucks.filter((t) => motion(t).k === k).length;
   const sum = [["moving", "moving"], ["stopped", "stopped"], ["quiet", "no signal"], ["off", "offline"], ["broken", "link broken"]]
     .filter(([k]) => n(k)).map(([k, w]) => `<b>${n(k)}</b> ${w}`).join(" · ");
-  el.innerHTML = (sum ? `<p class="stat" style="margin:0">${sum}</p>` : "") + list.map((t) => {
+  const noGroup = trucks.filter((t) => !t.has_group).length;
+  el.innerHTML = (sum ? `<p class="stat" style="margin:0">${sum}${noGroup ? ` · <b>${noGroup}</b> without group` : ""}</p>` : "") +
+    (!list.length ? `<div class="empty"><b>Nothing here</b>No truck matches this filter.</div>` : "") + list.map((t) => {
     const st = status(t), ev = t.open_event, mo = motion(t);
-    const issues = [!t.has_group && "no group chosen — alerts go nowhere", !t.phone && "no driver phone"].filter(Boolean);
+    const comp = companies.find((c) => c.id === t.company_id);
+    const issues = [!t.has_group && (comp?.dispatch_title ? `no group — alerts go to ${esc(comp.dispatch_title)}` : "no group — alerts go nowhere"),
+      !t.phone && "no driver phone"].filter(Boolean);
     return `<article class="card">
       <div class="row"><span class="dot ${mo.k === "moving" ? "" : mo.k}" title="${esc(mo.label)}"></span><span class="num">${esc(t.name ?? t.truck_number ?? "?")}</span>
-        ${ev ? `<span class="pill ${STATE[ev.state]?.[1] ?? "p-road"}">${esc(STATE[ev.state]?.[0] ?? ev.state)} · ${esc(ev.facility)}</span>` : ""}</div>
+        ${ev ? `<span class="pill ${ev.state === "approaching" ? "p-park" : "p-road"}">${ev.state === "approaching" ? "🟡" : "🔴"} ${esc(STATE[ev.state]?.[0] ?? ev.state)} · ${esc(ev.facility)}</span>`
+             : t.status === "green" ? `<span class="pill p-ok">🟢 On truck route</span>` : ""}</div>
       ${ev ? `<div class="warn">${esc(ev.zone)}${ev.acknowledged_by ? ` · informed by ${esc(ev.acknowledged_by)}` : " · nobody has informed the driver yet"}</div>` : ""}
       <div class="sub"><span class="st ${mo.k}">${esc(mo.label)}</span> · last GPS ${ago(t.at)}</div>
       ${t.address ? `<div class="sub">📍 ${esc(t.address)}</div>` : ""}
-      <div class="sub">${[t.driver && "👤 " + esc(t.driver), t.truck_number && "#" + esc(t.truck_number), t.group_title && "👥 " + esc(t.group_title), PROVIDER[t.provider] ?? "",
+      <div class="sub">${[t.driver && "👤 " + esc(t.driver), t.truck_number && "#" + esc(t.truck_number), t.group_title && t.has_group && "👥 " + esc(t.group_title),
+        t.company && "🏢 " + esc(t.company), t.source === "api" ? "ELD API" : (PROVIDER[t.provider] ?? ""),
         t.link_expires_at ? "link valid to " + fmt(t.link_expires_at, { year: "numeric", month: "short", day: "numeric" }) : ""].filter(Boolean).join(" · ")}</div>
       ${issues.length ? `<div class="warn">⚠ ${issues.join(" · ")}</div>` : ""}
+      ${!t.has_group ? `<div class="sub">Tie it to the driver's group: write <code>/truck ${esc(t.truck_number ?? t.name ?? "")}</code> in that group, or press Edit.</div>` : ""}
       ${st === "broken" ? `<div class="warn">The tracking link stopped working. Edit the truck and paste a new link.</div>` : ""}
       <div class="acts">${t.phone ? `<button class="copy" data-copy="${esc(t.phone)}">📞 ${esc(t.phone)}</button>` : ""}
         ${t.lat != null ? `<button class="copy" data-goto="${t.lat},${t.lng}">Show on map</button>` : ""}
@@ -371,6 +409,12 @@ function renderTrucks() {
     </article>`;
   }).join("");
 }
+
+document.querySelectorAll("#tfilter .chip").forEach((b) => b.addEventListener("click", () => {
+  truckFilter = b.dataset.f;
+  document.querySelectorAll("#tfilter .chip").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+  renderTrucks();
+}));
 
 // ---------------------------------------------------------------- add / edit truck
 let editing = null;
@@ -383,6 +427,8 @@ const ERR = {
   link_not_working: "The ELD did not answer with this link. Check that it is the live tracking link and that it has not expired.",
   group_not_found: "The bot is no longer in that group. Pick another one.",
   truck_not_found: "This truck was removed.",
+  company_not_found: "This company was removed.",
+  company_exists: "A company with this name already exists.",
 };
 async function loadGroupsQuiet() {
   const g = await api("groups");
@@ -404,6 +450,9 @@ async function openForm(t) {
   $("#fGroup").innerHTML = (active.length ? `<option value="">— choose a group —</option>` : `<option value="">Add the bot to a group first</option>`) +
     active.map((g) => `<option value="${g.chat_id}">${esc(g.title ?? g.chat_id)}</option>`).join("");
   $("#fGroup").value = t?.group_chat_id && active.some((g) => g.chat_id === t.group_chat_id) ? String(t.group_chat_id) : "";
+  try { companies = (await api("companies")).companies; } catch { /* keep */ }
+  $("#fCompany").innerHTML = `<option value="">— none —</option>` + companies.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join("");
+  $("#fCompany").value = t?.company_id ?? "";
   if (!t) $("#fName").focus();
 }
 function closeForm() { $("#truckForm").hidden = true; editing = null; if ($("#sheet").hidden) tg?.BackButton?.hide(); }
@@ -411,17 +460,17 @@ $("#addTruck").addEventListener("click", () => openForm(null));
 $("#fCancel").addEventListener("click", closeForm);
 $("#truckForm").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const name = $("#fName").value.trim(), link = $("#fLink").value.trim(), group = $("#fGroup").value || null, phone = $("#fPhone").value.trim();
+  const name = $("#fName").value.trim(), link = $("#fLink").value.trim(), group = $("#fGroup").value || null, phone = $("#fPhone").value.trim(), company = $("#fCompany").value || null;
   if (!name) { $("#fErr").textContent = ERR.name_required; $("#fName").focus(); return; }
   if (!editing && !link) { $("#fErr").textContent = "Paste the tracking link."; $("#fLink").focus(); return; }
-  if (!group && !(await confirmAsk("No group chosen: this truck's alerts will not go anywhere. Save anyway?"))) return;
+  if (!group && !(await confirmAsk("No group chosen: this truck's alerts go only to its company's dispatch group (if set). Save anyway?"))) return;
   $("#fSave").disabled = true; $("#fSave").textContent = link ? "Checking the link…" : "Saving…"; $("#fErr").textContent = "";
   try {
     if (editing) {
-      if (link) await api("add_truck", { name, link, group, phone });
-      else await api("update_truck", { id: editing.id, name, group, phone });
+      if (link) await api("add_truck", { name, link, group, phone, company });
+      else await api("update_truck", { id: editing.id, name, group, phone, company });
     } else {
-      await api("add_truck", { name, link, group, phone });
+      await api("add_truck", { name, link, group, phone, company });
     }
     tg?.HapticFeedback?.notificationOccurred("success");
     closeForm();
@@ -430,6 +479,77 @@ $("#truckForm").addEventListener("submit", async (e) => {
     $("#fErr").textContent = ERR[err.code] ?? ("Could not save: " + err.message);
     tg?.HapticFeedback?.notificationOccurred("error");
   } finally { $("#fSave").disabled = false; $("#fSave").textContent = "Save"; }
+});
+
+// ---------------------------------------------------------------- companies (ELD API)
+let editingCompany = null;
+async function loadCompanies() {
+  const el = $("#companies");
+  el.innerHTML = `<div class="empty">Loading…</div>`;
+  try {
+    companies = (await api("companies")).companies;
+    if (!companies.length) { el.innerHTML = `<div class="empty"><b>No companies yet</b>Add your company with its ELD API key and all its trucks are tracked automatically.</div>`; return; }
+    el.innerHTML = companies.map((c) => {
+      const ok = c.has_key && !c.last_error && c.last_ok_at;
+      const state = !c.has_key ? `<span class="pill p-muted">No API key</span>`
+        : c.last_error ? `<span class="pill p-road">API error</span>` : ok ? `<span class="pill p-ok">Syncing</span>` : `<span class="pill p-muted">Waiting</span>`;
+      return `<article class="card">
+        <div class="row"><span class="num" style="font-family:var(--ui)">${esc(c.name)}</span>${state}</div>
+        <div class="sub">${[c.usdot && "USDOT " + esc(c.usdot), "Five ELD", c.has_token && "provider token saved"].filter(Boolean).join(" · ")}</div>
+        <div class="sub">🚛 <b>${c.trucks}</b> trucks${c.no_group ? ` · <b>${c.no_group}</b> without group` : ""}${c.units_seen != null ? ` · ELD reports ${c.units_seen}` : ""}${c.last_ok_at ? (c.last_error ? ` · last good sync ${ago(c.last_ok_at)}` : ` · synced ${ago(c.last_ok_at)}`) : ""}</div>
+        <div class="sub">👥 Dispatch group: ${c.dispatch_title ? esc(c.dispatch_title) : "<span class='warn'>not set</span>"}</div>
+        ${c.last_error ? `<div class="warn">❗ ${esc(c.last_error)}${c.failures ? ` (${c.failures}×)` : ""}</div>` : ""}
+        <div class="acts"><button class="copy" data-cedit="${c.id}">Edit</button><button class="copy" data-ctest="${c.id}">Test connection</button>
+          <button class="copy danger" data-cremove="${c.id}">Remove</button></div>
+      </article>`;
+    }).join("");
+  } catch (err) { el.innerHTML = `<div class="empty"><b>Could not load companies</b>${esc(err.message)}</div>`; }
+}
+async function openCompanyForm(c) {
+  editingCompany = c || null;
+  $("#cTitle").textContent = c ? "Edit company" : "Add company";
+  $("#cName").value = c?.name ?? "";
+  $("#cUsdot").value = c?.usdot ?? "";
+  $("#cKey").value = ""; $("#cTok").value = "";
+  $("#cKey").placeholder = c?.has_key ? "saved — leave empty to keep" : "paste the API key";
+  $("#cTok").placeholder = c?.has_token ? "saved — leave empty to keep" : "optional";
+  $("#cBase").value = c?.base_url && c.base_url !== "https://api.fiveeld.com" ? c.base_url : "";
+  $("#cErr").textContent = "";
+  $("#companyForm").hidden = false;
+  tg?.BackButton?.show();
+  try { await loadGroupsQuiet(); } catch { /* keep */ }
+  const active = groups.filter((g) => g.active);
+  $("#cGroup").innerHTML = `<option value="">— none —</option>` + active.map((g) => `<option value="${g.chat_id}">${esc(g.title ?? g.chat_id)}</option>`).join("");
+  $("#cGroup").value = c?.dispatch_chat_id && active.some((g) => g.chat_id === c.dispatch_chat_id) ? String(c.dispatch_chat_id) : "";
+}
+function closeCompanyForm() { $("#companyForm").hidden = true; editingCompany = null; if ($("#sheet").hidden && $("#truckForm").hidden) tg?.BackButton?.hide(); }
+function testText(t) {
+  if (!t) return "";
+  if (t.ok) return `✅ Connected: the ELD returned ${t.units} truck${t.units === 1 ? "" : "s"}${t.sample?.length ? " (" + t.sample.map(esc).join(", ") + (t.units > t.sample.length ? ", …" : "") + ")" : ""}.`;
+  if (t.error === "no_key") return "Saved. Add the API key to start tracking.";
+  if (t.error === "no_usdot") return "Saved. Add the USDOT number to start tracking.";
+  return "❗ Saved, but the ELD did not accept it: " + esc(t.error) + (/401|403/.test(t.error) ? ". Check the API key; Five ELD may also require the provider token from their support." : "");
+}
+$("#addCompany").addEventListener("click", () => openCompanyForm(null));
+$("#cCancel").addEventListener("click", closeCompanyForm);
+$("#companyForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const name = $("#cName").value.trim();
+  if (!name) { $("#cErr").textContent = "Give the company a name."; $("#cName").focus(); return; }
+  if (!editingCompany && !$("#cKey").value.trim() && !(await confirmAsk("No API key: trucks will not be tracked through the API. Save anyway?"))) return;
+  $("#cSave").disabled = true; $("#cSave").textContent = "Saving and testing…"; $("#cErr").textContent = "";
+  try {
+    const r = await api("save_company", { id: editingCompany?.id ?? null, name, usdot: $("#cUsdot").value.trim(),
+      api_key: $("#cKey").value.trim(), provider_token: $("#cTok").value.trim(), dispatch: $("#cGroup").value || null,
+      base_url: $("#cBase").value.trim() });
+    tg?.HapticFeedback?.notificationOccurred(r.test?.ok ? "success" : "warning");
+    closeCompanyForm();
+    await loadCompanies();
+    tell(testText(r.test).replace(/<[^>]+>/g, ""));
+  } catch (err) {
+    $("#cErr").textContent = ERR[err.code] ?? ("Could not save: " + err.message);
+    tg?.HapticFeedback?.notificationOccurred("error");
+  } finally { $("#cSave").disabled = false; $("#cSave").textContent = "Save & test"; }
 });
 
 // ---------------------------------------------------------------- groups
@@ -463,6 +583,20 @@ document.addEventListener("click", async (e) => {
     const t = trucks.find((x) => x.id === rm.dataset.remove);
     if (!(await confirmAsk(`Stop tracking ${t?.name ?? "this truck"}? Its GPS history stays for disputes.`))) return;
     try { await api("remove_truck", { id: rm.dataset.remove }); await refreshTrucks(); } catch (err) { tell(ERR[err.code] ?? err.message); }
+  }
+  const ce = e.target.closest("[data-cedit]");
+  if (ce) openCompanyForm(companies.find((c) => c.id === ce.dataset.cedit));
+  const ct = e.target.closest("[data-ctest]");
+  if (ct) {
+    ct.textContent = "Testing…";
+    try { tell(testText(await api("test_company", { id: ct.dataset.ctest })).replace(/<[^>]+>/g, "")); } catch (err) { tell(err.message); }
+    ct.textContent = "Test connection"; loadCompanies();
+  }
+  const cr = e.target.closest("[data-cremove]");
+  if (cr) {
+    const c = companies.find((x) => x.id === cr.dataset.cremove);
+    if (!(await confirmAsk(`Remove ${c?.name ?? "this company"}? Its API key is deleted and its trucks stop updating through the API.`))) return;
+    try { await api("remove_company", { id: cr.dataset.cremove }); await loadCompanies(); await refreshTrucks(); } catch (err) { tell(ERR[err.code] ?? err.message); }
   }
   const lv = e.target.closest("[data-leave]");
   if (lv) {
@@ -580,7 +714,7 @@ function closeSheet() {
   tg?.BackButton?.hide(); tg?.MainButton?.hide();
 }
 $("#closeSheet").addEventListener("click", closeSheet);
-tg?.BackButton?.onClick(() => { if (!$("#truckForm").hidden) closeForm(); else closeSheet(); });
+tg?.BackButton?.onClick(() => { if (!$("#companyForm").hidden) closeCompanyForm(); else if (!$("#truckForm").hidden) closeForm(); else closeSheet(); });
 tg?.MainButton?.onClick(sendPdf);
 
 // ---------------------------------------------------------------- refresh loop
@@ -618,6 +752,7 @@ async function start() {
     return;
   }
   try {
+    try { companies = (await api("companies")).companies; } catch { /* the list works without it */ }
     const [z] = await Promise.all([api("zones"), refreshTrucks()]);
     zones = z;
     drawRoutes(map, zones.routes || []);

@@ -169,6 +169,13 @@ details summary{cursor:pointer}
     <button class="addbtn" id="addCompany">+ Add company (ELD API)</button>
     <p class="sub" style="margin:0 0 12px">With the company's ELD API key every truck of the company is tracked automatically. New trucks show up under <b>Trucks → Without group</b>; write <code>/truck 1001</code> in the driver's Telegram group to tie a truck to it.</p>
     <div class="list" id="companies"></div>
+    <article class="card" style="margin-top:16px">
+      <div class="row"><span class="num" style="font-family:var(--ui)">Amazon flyers</span><span class="pill p-muted" id="flyPill">…</span></div>
+      <div class="sub" id="flyStat">The bot sends these original pictures when a load is dispatched, and draws the truck on them.</div>
+      <div class="acts"><label class="copy" for="flyFiles" style="cursor:pointer">⬆ Upload flyers</label></div>
+      <input type="file" id="flyFiles" accept="image/jpeg,image/png" multiple hidden>
+      <div class="sub" id="flyLog"></div>
+    </article>
   </section>
   <section class="view pad" id="v-groups" hidden>
     <p class="stat" id="groupStat"></p>
@@ -481,9 +488,37 @@ $("#truckForm").addEventListener("submit", async (e) => {
   } finally { $("#fSave").disabled = false; $("#fSave").textContent = "Save"; }
 });
 
+// ---------------------------------------------------------------- Amazon flyers (stage 10)
+async function loadFlyers() {
+  try {
+    const list = (await api("flyers")).flyers;
+    const up = list.filter((f) => f.uploaded).length;
+    $("#flyPill").textContent = `${up} / ${list.length}`;
+    $("#flyPill").className = "pill " + (up === list.length && up ? "p-ok" : "p-muted");
+    const missing = [...new Set(list.filter((f) => !f.uploaded).map((f) => f.code))];
+    $("#flyStat").innerHTML = up === list.length && up ? "All flyers are uploaded."
+      : `Not uploaded yet: ${missing.slice(0, 12).map(esc).join(", ")}${missing.length > 12 ? ` +${missing.length - 12}` : ""}. Pick the flyer files (names like <code>CMH1_80.jpg</code>).`;
+  } catch (err) { $("#flyStat").textContent = "Could not load flyers: " + err.message; }
+}
+function fileB64(f) {
+  return new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(",")[1]); r.onerror = bad; r.readAsDataURL(f); });
+}
+$("#flyFiles").addEventListener("change", async (e) => {
+  const files = [...e.target.files]; e.target.value = "";
+  const log = $("#flyLog"); let done = 0, bad = 0;
+  for (const f of files) {
+    log.textContent = `Uploading ${done + bad + 1} / ${files.length}: ${f.name}…`;
+    try { await api("upload_flyer", { name: f.name, data: await fileB64(f) }); done++; }
+    catch (err) { bad++; console.warn(f.name, err); }
+  }
+  log.textContent = `✅ ${done} uploaded` + (bad ? ` · ❗ ${bad} not recognised (name must end with _<number>.jpg)` : "");
+  loadFlyers();
+});
+
 // ---------------------------------------------------------------- companies (ELD API)
 let editingCompany = null;
 async function loadCompanies() {
+  loadFlyers();
   const el = $("#companies");
   el.innerHTML = `<div class="empty">Loading…</div>`;
   try {

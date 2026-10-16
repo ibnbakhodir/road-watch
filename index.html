@@ -166,6 +166,16 @@ details summary{cursor:pointer}
     <div class="list" id="trucks"></div>
   </section>
   <section class="view pad" id="v-companies" hidden>
+    <article class="card" style="margin-bottom:16px">
+      <div class="row"><span class="num" style="font-family:var(--ui)">Driver warning</span><span class="pill p-muted" id="warnPill">…</span></div>
+      <div class="sub">When should the bot warn the driver's group before a restricted road? "On the restricted road" is always sent.</div>
+      <div class="chips" id="warnMode" style="margin-top:10px">
+        <button class="chip" data-m="mile1" aria-pressed="false">1 mile before</button>
+        <button class="chip" data-m="min5" aria-pressed="false">5 min before</button>
+        <button class="chip" data-m="inside_only" aria-pressed="false">Only when on it</button>
+      </div>
+      <div class="sub" id="warnLog"></div>
+    </article>
     <button class="addbtn" id="addCompany">+ Add company (ELD API)</button>
     <p class="sub" style="margin:0 0 12px">With the company's ELD API key every truck of the company is tracked automatically. New trucks show up under <b>Trucks → Without group</b>; write <code>/truck 1001</code> in the driver's Telegram group to tie a truck to it.</p>
     <div class="list" id="companies"></div>
@@ -488,6 +498,27 @@ $("#truckForm").addEventListener("submit", async (e) => {
   } finally { $("#fSave").disabled = false; $("#fSave").textContent = "Save"; }
 });
 
+// ---------------------------------------------------------------- driver warning (stage 12)
+const WARN_TXT = { mile1: "1 mile before", min5: "5 min before", inside_only: "Only when on it" };
+function showWarn(mode) {
+  document.querySelectorAll("#warnMode .chip").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.m === mode)));
+  $("#warnPill").textContent = WARN_TXT[mode] ?? "…";
+  $("#warnPill").className = "pill " + (mode ? "p-ok" : "p-muted");
+}
+async function loadSettings() {
+  try { showWarn((await api("settings")).settings.warn_mode); }
+  catch (err) { $("#warnLog").textContent = "Could not load: " + err.message; }
+}
+$("#warnMode").addEventListener("click", async (e) => {
+  const b = e.target.closest(".chip"); if (!b) return;
+  const before = document.querySelector('#warnMode .chip[aria-pressed="true"]')?.dataset.m;
+  showWarn(b.dataset.m); $("#warnLog").textContent = "Saving…";
+  try {
+    showWarn((await api("save_settings", { warn_mode: b.dataset.m })).settings.warn_mode);
+    $("#warnLog").textContent = "✅ Saved";
+  } catch (err) { showWarn(before); $("#warnLog").textContent = "❗ Not saved: " + err.message; }
+});
+
 // ---------------------------------------------------------------- Amazon flyers (stage 10)
 async function loadFlyers() {
   try {
@@ -518,6 +549,7 @@ $("#flyFiles").addEventListener("change", async (e) => {
 // ---------------------------------------------------------------- companies (ELD API)
 let editingCompany = null;
 async function loadCompanies() {
+  loadSettings();
   loadFlyers();
   const el = $("#companies");
   el.innerHTML = `<div class="empty">Loading…</div>`;

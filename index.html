@@ -738,7 +738,9 @@ async function openEvent(id) {
     const zl = drawZones(evMap, [{ name: e.zone, facility: e.facility, rule: e.rule, scope: "any", geom: d.zone_geom }]);
     const ll = d.points.map((p) => [p.lat, p.lng]);
     if (ll.length) {
-      L.polyline(ll, { color: "#2a6fd6", weight: 3 }).addTo(evMap);
+      // stage 13: the trail follows the roads between GPS fixes (straight lines cut corners at turns)
+      const path = Array.isArray(d.path) && d.path.length > 1 ? d.path.map(([x, y]) => [y, x]) : ll;
+      L.polyline(path, { color: "#2a6fd6", weight: 3 }).addTo(evMap);
       d.points.forEach((p, i) => L.circleMarker([p.lat, p.lng], { radius: i === 0 || i === ll.length - 1 ? 6 : 4, color: "#fff", weight: 1.5, fillColor: "#2a6fd6", fillOpacity: 1 })
         .bindTooltip(`${time(p.at)} · ${p.speed != null ? Math.round(p.speed) + " mph · " : ""}${dist(p.zone_m)} from road`).addTo(evMap));
     }

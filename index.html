@@ -136,6 +136,29 @@ select{font:inherit;font-size:13.5px;color:var(--fg);background:var(--bg);border
 code{font-family:var(--data);font-size:.92em;background:var(--bg2);padding:1px 5px;border-radius:5px}
 .card code{background:var(--bg)}
 details summary{cursor:pointer}
+/* map editor (stage 14) */
+.editbtn{position:absolute;left:12px;top:12px;z-index:500;border:0;border-radius:20px;padding:9px 14px;background:var(--bg);color:var(--fg);box-shadow:0 2px 10px rgba(0,0,0,.18);font-size:13px;font-weight:650;cursor:pointer}
+.editbtn[hidden],.edbar[hidden],.card[hidden],.legend[hidden],.fab[hidden]{display:none}
+.edbar{position:absolute;left:8px;right:8px;bottom:calc(8px + env(safe-area-inset-bottom,0px));z-index:600;background:var(--bg);border-radius:16px;box-shadow:0 4px 18px rgba(0,0,0,.22);padding:10px;display:grid;gap:8px}
+@media (min-width:640px){.edbar{left:auto;right:12px;width:540px}}
+#v-map{isolation:isolate}   /* keep Leaflet's z-indexes under the forms */
+.edtools,.edacts{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.edacts{grid-template-columns:repeat(4,1fr)}
+.edbar button{border:1px solid var(--line);background:var(--bg2);border-radius:12px;padding:10px 4px;font-size:13.5px;font-weight:600;cursor:pointer;white-space:nowrap}
+.edbar .tool[aria-pressed="true"]{background:var(--btn);color:var(--btn-fg);border-color:var(--btn)}
+.edbar .primary{background:var(--ok);border-color:var(--ok);color:#fff}
+.edbar button:disabled{opacity:.5;cursor:default}
+.edhint{font-size:12.5px;color:var(--muted);min-height:1.4em;padding:0 2px}
+.edhint.bad{color:var(--road)} .edhint.good{color:var(--ok)}
+.edbar input{font:inherit;font-size:14px;color:var(--fg);background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:8px 10px;width:100%}
+.edbar input[hidden]{display:none}
+#map.erasing{cursor:crosshair;touch-action:none}
+#map.drawing{cursor:copy}
+.popbtn{display:block;margin-top:8px;border:0;border-radius:8px;padding:7px 10px;background:var(--bg2);color:var(--fg);font:600 13px var(--ui);cursor:pointer;width:100%}
+.popbtn.danger{color:var(--road)}
+.hist{display:grid;gap:8px;margin-top:12px}
+.hist .card{gap:4px}
+.hist .undone{opacity:.55}
 </style>
 </head>
 <body>
@@ -155,6 +178,22 @@ details summary{cursor:pointer}
     <div id="map" aria-label="Map of trucks and restricted roads"></div>
     <div class="legend"><span><i></i>No driving</span><span><i class="a"></i>No-entry area</span><span><i class="p"></i>No parking</span><span><i class="g"></i>Truck route</span></div>
     <button class="fab" id="fit">Show all trucks</button>
+    <button class="editbtn" id="editMap" hidden>✏️ Edit map</button>
+    <div class="edbar" id="edbar" hidden>
+      <div class="edtools" role="toolbar" aria-label="Map tool">
+        <button class="tool" data-t="move" aria-pressed="true">✋ Move</button>
+        <button class="tool" data-t="erase" aria-pressed="false">🧽 Erase</button>
+        <button class="tool" data-t="green" aria-pressed="false">🟢 Green road</button>
+      </div>
+      <div class="edhint" id="edHint" role="status"></div>
+      <input id="routeName" maxlength="60" placeholder="Green road name (optional)" autocomplete="off" hidden>
+      <div class="edacts">
+        <button id="edUndo">↩ Undo</button>
+        <button id="edSave" class="primary">💾 Save</button>
+        <button id="edHist">🕘 History</button>
+        <button id="edExit">✕ Exit</button>
+      </div>
+    </div>
   </section>
   <section class="view pad" id="v-trucks" hidden>
     <button class="addbtn" id="addTruck">+ Add truck</button>
@@ -185,6 +224,12 @@ details summary{cursor:pointer}
       <div class="acts"><label class="copy" for="flyFiles" style="cursor:pointer">⬆ Upload flyers</label></div>
       <input type="file" id="flyFiles" accept="image/jpeg,image/png" multiple hidden>
       <div class="sub" id="flyLog"></div>
+    </article>
+    <article class="card" style="margin-top:16px" id="editorsCard" hidden>
+      <div class="row"><span class="num" style="font-family:var(--ui)">Map editors</span></div>
+      <div class="sub">Only these people can erase restricted roads and draw green roads (Map → ✏️ Edit map).</div>
+      <div class="list" id="editors" style="gap:6px"></div>
+      <div class="sub" id="editorsHint"></div>
     </article>
   </section>
   <section class="view pad" id="v-groups" hidden>
@@ -242,6 +287,12 @@ details summary{cursor:pointer}
     <div class="err" id="cErr" role="alert"></div>
     <div class="btns"><button type="button" id="cCancel">Cancel</button><button type="submit" class="primary" id="cSave">Save &amp; test</button></div>
   </form>
+  <section class="form" id="histForm" hidden>
+    <h2>Map changes</h2>
+    <p class="sub" style="margin:0">Every saved change to the map. Undo puts that change back the way it was.</p>
+    <div class="hist" id="histList"></div>
+    <div class="btns" style="grid-template-columns:1fr"><button type="button" id="histClose">Close</button></div>
+  </section>
   <div class="gate" id="gate" hidden></div>
 </main>
 <script>
@@ -250,7 +301,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 let TZ = "America/Chicago", trucks = [], groups = [], companies = [], zones = null, map, truckLayer, evMap, currentEvent = null;
-let truckFilter = "";
+let truckFilter = "", STAFF = null;
 
 // ---------------------------------------------------------------- formatting
 const fmt = (iso, o) => iso ? new Intl.DateTimeFormat("en-US", { timeZone: TZ, ...o }).format(new Date(iso)) : "–";
@@ -338,16 +389,36 @@ function zoneStyle(z) {
   if (z.rule === "no_entry_and_no_parking") return { color: "#d13a2f", weight: 5, dashArray: "14 4", opacity: .95 };
   return { color: "#d13a2f", weight: 5, opacity: .9 };
 }
-function drawZones(target, list) {
+// opts.edit: popups get the editor buttons; opts.interactive=false: no popups (erasing / drawing)
+function drawZones(target, list, opts = {}) {
   return L.geoJSON({ type: "FeatureCollection", features: list.map((z) => ({ type: "Feature", properties: z, geometry: z.geom })) },
-    { style: (f) => zoneStyle(f.properties),
-      onEachFeature: (f, l) => l.bindPopup(`<b>${esc(f.properties.name)}</b><br>${esc(f.properties.facility)} · ${f.properties.rule === "no_parking" ? "No parking or idling" : f.properties.rule === "no_entry" ? "No driving" : "No driving or parking"}${f.properties.scope === "facility_trips" ? "<br><span style='color:#6b737b'>Warns trucks going to or from this site</span>" : ""}`) }).addTo(target);
+    { interactive: opts.interactive !== false,
+      style: (f) => f.properties.erased_all ? { color: "#8a9199", weight: 3, dashArray: "4 6", opacity: .9, fillOpacity: .05 } : zoneStyle(f.properties),
+      onEachFeature: (f, l) => l.bindPopup(`<b>${esc(f.properties.name)}</b><br>${esc(f.properties.facility)} · ${f.properties.rule === "no_parking" ? "No parking or idling" : f.properties.rule === "no_entry" ? "No driving" : "No driving or parking"}${f.properties.scope === "facility_trips" ? "<br><span style='color:#6b737b'>Warns trucks going to or from this site</span>" : ""}` +
+        (f.properties.erased_all ? `<br><span style="color:#6b737b">Erased completely — the bot ignores it</span>` : f.properties.edited ? `<br><span style="color:#6b737b">Partly erased by hand</span>` : "") +
+        (opts.edit && f.properties.edited ? `<button class="popbtn" data-restore="${esc(f.properties.id)}">↩ Restore Amazon shape</button>` : "")) }).addTo(target);
 }
-function drawRoutes(target, list) {
+function drawRoutes(target, list, opts = {}) {
   return L.geoJSON({ type: "FeatureCollection", features: list.map((r) => ({ type: "Feature", properties: r, geometry: r.geom })) },
-    { style: () => ({ color: "#1d8a6b", weight: 5, opacity: .85 }),
+    { interactive: opts.interactive !== false,
+      style: () => ({ color: "#1d8a6b", weight: 5, opacity: .85 }),
       onEachFeature: (f, l) => l.bindPopup(`<b>✅ ${esc(f.properties.name)}</b><br>${esc(f.properties.facility)} · commercial-friendly route` +
-        (f.properties.instructions ? `<br><span style="color:#6b737b">${esc(f.properties.instructions).replace(/\n/g, "<br>")}</span>` : "")) }).addTo(target);
+        (f.properties.instructions ? `<br><span style="color:#6b737b">${esc(f.properties.instructions).replace(/\n/g, "<br>")}</span>` : "") +
+        (opts.edit ? `<button class="popbtn danger" data-unroute="${esc(f.properties.id)}">🗑 Remove this green road</button>` : "")) }).addTo(target);
+}
+let zoneLayer, routeLayer, eraseLayer;
+function drawMapData() {
+  for (const l of [zoneLayer, routeLayer, eraseLayer]) l?.remove();
+  const opts = { edit: ED.on, interactive: !ED.on || ED.tool === "move" };
+  routeLayer = drawRoutes(map, zones.routes || [], opts);
+  zoneLayer = drawZones(map, zones.zones.filter((x) => x.active || (ED.on && x.erased_all)), opts);
+  eraseLayer = null;
+  if (ED.on) {
+    // what was erased by hand, so it can be seen (and restored from the zone's popup)
+    const er = zones.zones.filter((z) => z.erase && !z.erased_all);
+    eraseLayer = L.geoJSON({ type: "FeatureCollection", features: er.map((z) => ({ type: "Feature", properties: {}, geometry: z.erase })) },
+      { interactive: false, style: () => ({ color: "#8a9199", weight: 1, dashArray: "3 4", fillColor: "#8a9199", fillOpacity: .18 }) }).addTo(map);
+  }
 }
 function initMap() {
   map = L.map("map", { zoomControl: false, attributionControl: true }).setView([39.5, -86], 5);
@@ -550,6 +621,7 @@ $("#flyFiles").addEventListener("change", async (e) => {
 let editingCompany = null;
 async function loadCompanies() {
   loadSettings();
+  loadEditors();
   loadFlyers();
   const el = $("#companies");
   el.innerHTML = `<div class="empty">Loading…</div>`;
@@ -783,8 +855,259 @@ function closeSheet() {
   tg?.BackButton?.hide(); tg?.MainButton?.hide();
 }
 $("#closeSheet").addEventListener("click", closeSheet);
-tg?.BackButton?.onClick(() => { if (!$("#companyForm").hidden) closeCompanyForm(); else if (!$("#truckForm").hidden) closeForm(); else closeSheet(); });
+tg?.BackButton?.onClick(() => { if (!$("#histForm").hidden) closeHistory(); else if (!$("#companyForm").hidden) closeCompanyForm(); else if (!$("#truckForm").hidden) closeForm(); else closeSheet(); });
 tg?.MainButton?.onClick(sendPdf);
+
+// ---------------------------------------------------------------- map editor (stage 14)
+// Erase: drag over a red road / area, the touched part is wiped (brush ~26 px wide at the current zoom).
+// Green road: tap the start, the turns and the end; each piece follows the real roads (server snaps it).
+// Nothing changes until Save. Undo removes the last stroke or point. Saved changes have their own undo
+// in History, and an erased zone can be put back to the Amazon shape from its popup.
+const ED = { on: false, tool: "move", strokes: [], pts: [], segs: [], ops: [], cur: null, busy: false, draft: null, markers: null };
+const BRUSH_PX = 26;
+const HINT = {
+  move: "Move and zoom the map. Tap a red road or a green road for its options.",
+  erase: "Drag your finger over the wrong part of a red road. Switch to ✋ Move to move the map.",
+  green: "Tap the start of the road, then each turn, then the end. The line follows the real roads.",
+};
+function edHint(text, cls = "") { const h = $("#edHint"); h.textContent = text; h.className = "edhint " + cls; }
+function edDirty() { return ED.strokes.length > 0 || ED.pts.length > 1; }
+function edButtons() {
+  $("#edUndo").disabled = !ED.ops.length || ED.busy;
+  $("#edSave").disabled = !edDirty() || ED.busy;
+  $("#routeName").hidden = ED.pts.length < 2;
+}
+function setTool(t) {
+  ED.tool = t;
+  document.querySelectorAll("#edbar .tool").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.t === t)));
+  const el = map.getContainer();
+  el.classList.toggle("erasing", t === "erase");
+  el.classList.toggle("drawing", t === "green");
+  if (t === "erase") { map.dragging.disable(); map.touchZoom.disable(); map.doubleClickZoom.disable(); map.boxZoom.disable(); }
+  else { map.dragging.enable(); map.touchZoom.enable(); map.doubleClickZoom.enable(); map.boxZoom.enable(); }
+  map.closePopup();
+  drawMapData();
+  edHint(HINT[t]);
+}
+function metresPerBrush() {
+  const c = map.getSize().divideBy(2);
+  return map.distance(map.containerPointToLatLng(c), map.containerPointToLatLng(c.add([BRUSH_PX, 0])));
+}
+function clearDrafts() {
+  for (const s of ED.strokes) s.layer.remove();
+  ED.strokes = []; ED.pts = []; ED.segs = []; ED.ops = []; ED.cur = null;
+  ED.draft?.remove(); ED.draft = null;
+  ED.markers?.clearLayers();
+  $("#routeName").value = "";
+}
+function enterEdit() {
+  ED.on = true;
+  ED.markers = ED.markers || L.layerGroup().addTo(map);
+  $("#edbar").hidden = false; $("#editMap").hidden = true;
+  truckLayer.remove();   // truck markers would catch the taps meant for the roads
+  document.querySelector("#v-map .legend").hidden = true; $("#fit").hidden = true;
+  setTool("move");
+  edButtons();
+  tg?.disableVerticalSwipes?.();   // a finger drag must not close the app while editing
+  if (map.getZoom() < 12) edHint("Zoom in to the site you want to fix, then pick 🧽 Erase or 🟢 Green road.");
+}
+async function exitEdit() {
+  if (edDirty() && !(await askYes("Leave without saving? Your unsaved changes will be lost."))) return;
+  clearDrafts();
+  ED.on = false;
+  setTool("move");
+  $("#edbar").hidden = true; $("#editMap").hidden = !STAFF?.can_edit_map;
+  document.querySelector("#v-map .legend").hidden = false; $("#fit").hidden = false;
+  tg?.enableVerticalSwipes?.();
+  truckLayer.addTo(map);
+  drawMapData();
+}
+function askYes(text) {
+  return new Promise((res) => {
+    if (tg?.showConfirm) { try { tg.showConfirm(text, (ok) => res(!!ok)); return; } catch { /* old client */ } }
+    res(window.confirm(text));
+  });
+}
+const MAP_ERR = {
+  newer_edit: "A newer change touches the same road. Undo that one first.",
+  nothing_to_undo: "Already undone.", no_site_near: "This green road is too far from any site.",
+  route_too_short: "The green road is too short.", route_too_long: "The green road is too long — save it in parts.",
+  erase_too_big: "That erase is too big — zoom in and erase in smaller parts.", not_editor: "You cannot edit the map.",
+  bad_strokes: "Nothing to erase.", route_not_found: "That green road is already gone.",
+};
+const errText = (err) => MAP_ERR[err.code] || err.message;
+async function reloadZones() { zones = await api("zones"); drawMapData(); }
+
+// --- erasing: pointer strokes on the map
+(function eraserEvents() {
+  const el = () => map.getContainer();
+  const start = (e) => {
+    if (!ED.on || ED.tool !== "erase" || ED.busy || (e.pointerType === "mouse" && e.button !== 0)) return;
+    e.preventDefault(); e.stopPropagation();
+    try { el().setPointerCapture(e.pointerId); } catch { /* ignore */ }
+    const ll = map.mouseEventToLatLng(e);
+    ED.cur = { w: metresPerBrush(), pts: [ll], px: [e.clientX, e.clientY],
+      layer: L.polyline([ll, ll], { color: "#ffffff", weight: BRUSH_PX, opacity: .85, lineCap: "round", lineJoin: "round", interactive: false }).addTo(map) };
+  };
+  const move = (e) => {
+    if (!ED.cur) return;
+    e.preventDefault();
+    const [x, y] = ED.cur.px;
+    if (Math.hypot(e.clientX - x, e.clientY - y) < 4) return;
+    ED.cur.px = [e.clientX, e.clientY];
+    ED.cur.pts.push(map.mouseEventToLatLng(e));
+    ED.cur.layer.setLatLngs(ED.cur.pts);
+  };
+  const end = () => {
+    if (!ED.cur) return;
+    const s = ED.cur; ED.cur = null;
+    if (s.pts.length === 1) { s.layer.remove(); s.layer = L.circleMarker(s.pts[0], { radius: BRUSH_PX / 2, stroke: false, fillColor: "#fff", fillOpacity: .85, interactive: false }).addTo(map); }
+    ED.strokes.push(s); ED.ops.push("stroke");
+    edHint(`${ED.strokes.length} erase stroke${ED.strokes.length > 1 ? "s" : ""} — press 💾 Save to apply.`);
+    edButtons();
+  };
+  // attach once the map exists
+  const wait = setInterval(() => {
+    if (!map) return;
+    clearInterval(wait);
+    el().addEventListener("pointerdown", start, { passive: false });
+    el().addEventListener("pointermove", move, { passive: false });
+    el().addEventListener("pointerup", end);
+    el().addEventListener("pointercancel", end);
+    map.on("click", onMapClick);
+    map.on("popupopen", onPopup);
+  }, 50);
+})();
+
+// --- green road: taps snapped to roads
+function drawDraft() {
+  ED.draft?.remove();
+  const line = ED.segs.flatMap((s, i) => (i ? s.coords.slice(1) : s.coords)).map(([lng, lat]) => [lat, lng]);
+  ED.draft = line.length > 1 ? L.polyline(line, { color: "#1d8a6b", weight: 6, opacity: .9, dashArray: "10 6", interactive: false }).addTo(map) : null;
+  ED.markers.clearLayers();
+  ED.pts.forEach((p, i) => L.circleMarker(p, { radius: i === 0 || i === ED.pts.length - 1 ? 7 : 5, color: "#fff", weight: 2, fillColor: "#1d8a6b", fillOpacity: 1, interactive: false }).addTo(ED.markers));
+}
+async function onMapClick(e) {
+  if (!ED.on || ED.tool !== "green" || ED.busy) return;
+  const ll = e.latlng;
+  ED.pts.push(ll); ED.ops.push("pt");
+  if (ED.pts.length === 1) { drawDraft(); edHint("Start set. Now tap the next turn or the end."); edButtons(); return; }
+  const a = ED.pts[ED.pts.length - 2];
+  ED.busy = true; edButtons(); edHint("Finding the road…");
+  try {
+    const r = await api("map_snap", { a: [a.lng, a.lat], b: [ll.lng, ll.lat] });
+    ED.segs.push(r);
+    drawDraft();
+    edHint(r.snapped ? `Green road: ${ED.pts.length} points. Tap more, or press 💾 Save.` : "⚠ No known road there — this piece is drawn straight. Tap closer to the road, or Undo.", r.snapped ? "" : "bad");
+  } catch (err) {
+    ED.pts.pop(); ED.ops.pop();
+    drawDraft();
+    edHint("Could not find the road: " + errText(err), "bad");
+  } finally { ED.busy = false; edButtons(); }
+}
+function undo() {
+  const op = ED.ops.pop();
+  if (op === "stroke") ED.strokes.pop()?.layer.remove();
+  if (op === "pt") { ED.pts.pop(); if (ED.segs.length >= ED.pts.length && ED.segs.length) ED.segs.pop(); drawDraft(); }
+  edHint(edDirty() || ED.pts.length ? "Undone." : HINT[ED.tool]);
+  edButtons();
+}
+async function save() {
+  if (!edDirty()) return;
+  ED.busy = true; edButtons(); edHint("Saving…");
+  const done = [];
+  try {
+    if (ED.strokes.length) {
+      const r = await api("map_erase", { strokes: ED.strokes.map((s) => ({ w: Math.round(s.w), pts: s.pts.map((p) => [+p.lng.toFixed(6), +p.lat.toFixed(6)]) })) });
+      done.push(r.zones.length ? `erased on ${r.zones.map((z) => z.facility + " " + z.name).join(", ")}` : "the eraser did not touch a red road");
+      for (const s of ED.strokes) s.layer.remove();
+      ED.strokes = []; ED.ops = ED.ops.filter((o) => o !== "stroke");
+    }
+    if (ED.pts.length > 1) {
+      const coords = ED.segs.flatMap((s, i) => (i ? s.coords.slice(1) : s.coords));
+      const r = await api("map_save_route", { coords, name: $("#routeName").value });
+      done.push(`green road saved for ${r.facility} (${dist(r.length_m)})`);
+      ED.pts = []; ED.segs = []; ED.ops = ED.ops.filter((o) => o !== "pt"); $("#routeName").value = ""; drawDraft();
+    }
+    await reloadZones();
+    edHint(`✅ Saved: ${done.join("; ")}. The bot uses it from the next minute.`, "good");
+    tg?.HapticFeedback?.notificationOccurred("success");
+  } catch (err) {
+    edHint("Not saved: " + errText(err), "bad");
+  } finally { ED.busy = false; edButtons(); }
+}
+// popup buttons: restore a zone, remove a green road
+function onPopup(e) {
+  const box = e.popup.getElement();
+  box?.querySelector("[data-restore]")?.addEventListener("click", async (ev) => {
+    const id = ev.currentTarget.dataset.restore;
+    map.closePopup();
+    edHint("Restoring…");
+    try { await api("map_restore_zone", { id }); await reloadZones(); edHint("✅ Back to the Amazon shape.", "good"); }
+    catch (err) { edHint("Not restored: " + errText(err), "bad"); }
+  });
+  box?.querySelector("[data-unroute]")?.addEventListener("click", async (ev) => {
+    const id = ev.currentTarget.dataset.unroute;
+    map.closePopup();
+    if (!(await askYes("Remove this green road? The red roads around it come back. You can undo it in History."))) return;
+    try { await api("map_remove_route", { id }); await reloadZones(); edHint("✅ Green road removed.", "good"); }
+    catch (err) { edHint("Not removed: " + errText(err), "bad"); }
+  });
+}
+// history
+const HKIND = { erase: "🧽 Erased", restore: "↩ Restored Amazon shape", route_add: "🟢 Green road added", route_remove: "🗑 Green road removed" };
+async function openHistory() {
+  $("#histForm").hidden = false;
+  tg?.BackButton?.show();
+  const list = $("#histList");
+  list.innerHTML = `<p class="sub">Loading…</p>`;
+  try {
+    const { history } = await api("map_history");
+    list.innerHTML = !history.length ? `<div class="empty"><b>No changes yet</b>Saved map changes show up here.</div>` : history.map((h) => `
+      <article class="card ${h.reverted_at ? "undone" : ""}">
+        <div class="row"><b>${HKIND[h.kind] ?? esc(h.kind)}</b><span class="sub">${esc(full(h.at))}</span></div>
+        <div class="sub">${(h.items || []).filter(Boolean).map(esc).join("<br>")}</div>
+        <div class="sub">by ${esc(h.by ?? "?")}${h.reverted_at ? ` · undone by ${esc(h.reverted_by ?? "?")} ${esc(full(h.reverted_at))}` : ""}</div>
+        ${h.reverted_at ? "" : `<div class="acts"><button class="copy" data-revert="${esc(h.batch)}">↩ Undo this change</button></div>`}
+      </article>`).join("");
+  } catch (err) { list.innerHTML = `<p class="warn">${esc(errText(err))}</p>`; }
+}
+$("#histList").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-revert]");
+  if (!b) return;
+  b.disabled = true; b.textContent = "Undoing…";
+  try { await api("map_revert", { batch: b.dataset.revert }); await reloadZones(); await openHistory(); }
+  catch (err) { b.disabled = false; b.textContent = "↩ Undo this change"; b.insertAdjacentHTML("afterend", `<span class="warn">${esc(errText(err))}</span>`); }
+});
+function closeHistory() { $("#histForm").hidden = true; tg?.BackButton?.hide(); }
+$("#histClose").addEventListener("click", closeHistory);
+$("#editMap").addEventListener("click", enterEdit);
+$("#edExit").addEventListener("click", exitEdit);
+$("#edUndo").addEventListener("click", undo);
+$("#edSave").addEventListener("click", save);
+$("#edHist").addEventListener("click", openHistory);
+document.querySelectorAll("#edbar .tool").forEach((b) => b.addEventListener("click", () => { tg?.HapticFeedback?.selectionChanged(); setTool(b.dataset.t); }));
+
+// map editors (Companies tab)
+async function loadEditors() {
+  if (!STAFF?.can_edit_map) return;
+  $("#editorsCard").hidden = false;
+  try {
+    const r = await api("map_editors");
+    $("#editors").innerHTML = r.editors.map((e) => `<div class="row"><span>👤 ${esc(e.name)}</span>${e.is_owner ? `<span class="pill p-muted">owner</span>` : ""}
+      ${STAFF.is_owner && !e.is_owner ? `<button class="copy danger" data-uneditor="${e.tg_user_id}" style="margin-left:auto">Remove</button>` : ""}</div>`).join("");
+    $("#editorsHint").innerHTML = STAFF.is_owner
+      ? (r.code_set ? "To add someone: give them the map-editor password; they send it to the bot. To change the password, send <code>/mapcode</code> to the bot."
+                    : "To add someone: send <code>/mapcode</code> to the bot and set a map-editor password, then give it to them; they send it to the bot.")
+      : "Ask the owner to add or remove map editors.";
+  } catch (err) { $("#editorsHint").textContent = errText(err); }
+}
+$("#editors").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-uneditor]");
+  if (!b || !(await askYes("Remove this map editor?"))) return;
+  try { await api("map_set_editor", { tg_user_id: Number(b.dataset.uneditor), on: false }); loadEditors(); }
+  catch (err) { $("#editorsHint").textContent = errText(err); }
+});
 
 // ---------------------------------------------------------------- refresh loop
 async function refreshTrucks() {
@@ -814,6 +1137,7 @@ async function start() {
   try {
     const me = await api("me");
     TZ = me.tz || TZ;
+    STAFF = me.staff;
   } catch (err) {
     if (err.code === "not_staff") gate("Send the password first", "Close this window, send the password to the bot in a private chat, then open the app again.");
     else if (err.code === "not_signed_in") gate("Please reopen the panel", "Your Telegram sign-in expired. Close this window and open the panel from the bot again.");
@@ -824,9 +1148,9 @@ async function start() {
     try { companies = (await api("companies")).companies; } catch { /* the list works without it */ }
     const [z] = await Promise.all([api("zones"), refreshTrucks()]);
     zones = z;
-    drawRoutes(map, zones.routes || []);
-    drawZones(map, zones.zones.filter((x) => x.active));
+    drawMapData();
     drawFacilities();
+    $("#editMap").hidden = !STAFF?.can_edit_map;
     if (trucks.some((t) => t.lat != null)) fitTrucks(); else map.setView([39.5, -86], 5);
   } catch (err) { $("#updated").textContent = "Could not load: " + err.message; }
   setInterval(() => { if (!document.hidden) refreshTrucks().catch(() => { $("#updated").textContent = "Offline, retrying…"; }); }, 30000);

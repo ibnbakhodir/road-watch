@@ -136,6 +136,13 @@ select{font:inherit;font-size:13.5px;color:var(--fg);background:var(--bg);border
 code{font-family:var(--data);font-size:.92em;background:var(--bg2);padding:1px 5px;border-radius:5px}
 .card code{background:var(--bg)}
 details summary{cursor:pointer}
+/* carriers (stage 15) */
+#carrierSel{font-size:12.5px;padding:3px 6px;max-width:46vw;margin-left:auto}
+#carrierSel[hidden],.tab[hidden],#addTruck[hidden],#addCompany[hidden]{display:none}
+.linkbox{background:var(--bg);border:1px dashed var(--line);border-radius:10px;padding:8px 10px;display:grid;gap:6px;min-width:0}
+.linkbox code{font-size:12px;overflow-wrap:anywhere;background:none;padding:0}
+.linkbox .acts{gap:14px}
+.newlink{margin-bottom:12px}
 /* map editor (stage 14) */
 .editbtn{position:absolute;left:12px;top:12px;z-index:500;border:0;border-radius:20px;padding:9px 14px;background:var(--bg);color:var(--fg);box-shadow:0 2px 10px rgba(0,0,0,.18);font-size:13px;font-weight:650;cursor:pointer}
 .editbtn[hidden],.edbar[hidden],.card[hidden],.legend[hidden],.fab[hidden]{display:none}
@@ -163,7 +170,7 @@ details summary{cursor:pointer}
 </head>
 <body>
 <header class="top">
-  <div class="brand"><h1>Road Watch</h1><small id="updated">Loading…</small></div>
+  <div class="brand"><h1>Road Watch</h1><select id="carrierSel" hidden aria-label="Carrier"></select><small id="updated">Loading…</small></div>
   <nav class="tabs" role="tablist">
     <button class="tab" role="tab" data-v="map" aria-selected="true">Map</button>
     <button class="tab" role="tab" data-v="trucks" aria-selected="false">Trucks</button>
@@ -171,6 +178,7 @@ details summary{cursor:pointer}
     <button class="tab" role="tab" data-v="groups" aria-selected="false">Groups</button>
     <button class="tab" role="tab" data-v="alerts" aria-selected="false">Alerts <span class="n" id="openN" hidden></span></button>
     <button class="tab" role="tab" data-v="evidence" aria-selected="false">Evidence</button>
+    <button class="tab" role="tab" data-v="carriers" aria-selected="false" hidden>Carriers</button>
   </nav>
 </header>
 <main>
@@ -215,10 +223,25 @@ details summary{cursor:pointer}
       </div>
       <div class="sub" id="warnLog"></div>
     </article>
+    <article class="card" style="margin-bottom:16px" id="langCard" hidden>
+      <div class="row"><span class="num" style="font-family:var(--ui)">Language</span></div>
+      <div class="sub">Language of this app for your company.</div>
+      <div class="chips" id="langMode" style="margin-top:10px">
+        <button class="chip" data-l="en" aria-pressed="false">English</button>
+        <button class="chip" data-l="uz" aria-pressed="false">O'zbekcha</button>
+      </div>
+    </article>
+    <article class="card" style="margin-bottom:16px" id="teamCard" hidden>
+      <div class="row"><span class="num" style="font-family:var(--ui)">Team</span><span class="pill p-muted" id="teamPill"></span></div>
+      <div class="sub">People who can open this app for your company. Dispatchers see trucks and alerts; only owners change keys and settings.</div>
+      <div class="list" id="team" style="gap:6px"></div>
+      <div class="acts"><button class="copy" id="inviteDisp">+ Invite dispatcher</button><button class="copy" id="inviteOwner" hidden>+ Owner link</button></div>
+      <div id="teamLinks" style="display:grid;gap:8px"></div>
+    </article>
     <button class="addbtn" id="addCompany">+ Add company (ELD API)</button>
     <p class="sub" style="margin:0 0 12px">With the company's ELD API key every truck of the company is tracked automatically. New trucks show up under <b>Trucks → Without group</b>; write <code>/truck 1001</code> in the driver's Telegram group to tie a truck to it.</p>
     <div class="list" id="companies"></div>
-    <article class="card" style="margin-top:16px">
+    <article class="card" style="margin-top:16px" id="flyCard" hidden>
       <div class="row"><span class="num" style="font-family:var(--ui)">Amazon flyers</span><span class="pill p-muted" id="flyPill">…</span></div>
       <div class="sub" id="flyStat">The bot sends these original pictures when a load is dispatched, and draws the truck on them.</div>
       <div class="acts"><label class="copy" for="flyFiles" style="cursor:pointer">⬆ Upload flyers</label></div>
@@ -231,6 +254,12 @@ details summary{cursor:pointer}
       <div class="list" id="editors" style="gap:6px"></div>
       <div class="sub" id="editorsHint"></div>
     </article>
+  </section>
+  <section class="view pad" id="v-carriers" hidden>
+    <button class="addbtn" id="addCarrier">+ Add carrier</button>
+    <p class="sub" style="margin:0 0 12px">Each carrier sees only its own trucks, groups, alerts and evidence. Send the owner link to the carrier's owner: they open it in Telegram and their company is ready.</p>
+    <div id="carrierNew"></div>
+    <div class="list" id="carriers"></div>
   </section>
   <section class="view pad" id="v-groups" hidden>
     <p class="stat" id="groupStat"></p>
@@ -287,6 +316,14 @@ details summary{cursor:pointer}
     <div class="err" id="cErr" role="alert"></div>
     <div class="btns"><button type="button" id="cCancel">Cancel</button><button type="submit" class="primary" id="cSave">Save &amp; test</button></div>
   </form>
+  <form class="form" id="carrierForm" hidden novalidate>
+    <h2>Add carrier</h2>
+    <p class="sub" style="margin:0">You get a one-time link (7 days) for the carrier's owner.</p>
+    <label>Carrier name<input id="kName" maxlength="80" placeholder="Swift Haul LLC" autocomplete="off" required></label>
+    <label>USDOT number <small>optional</small><input id="kUsdot" inputmode="numeric" maxlength="12" autocomplete="off"></label>
+    <div class="err" id="kErr" role="alert"></div>
+    <div class="btns"><button type="button" id="kCancel">Cancel</button><button type="submit" class="primary" id="kSave">Create</button></div>
+  </form>
   <section class="form" id="histForm" hidden>
     <h2>Map changes</h2>
     <p class="sub" style="margin:0">Every saved change to the map. Undo puts that change back the way it was.</p>
@@ -301,7 +338,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 let TZ = "America/Chicago", trucks = [], groups = [], companies = [], zones = null, map, truckLayer, evMap, currentEvent = null;
-let truckFilter = "", STAFF = null;
+let truckFilter = "", STAFF = null, CARRIER_SEL = null, CARRIERS = [];
 
 // ---------------------------------------------------------------- formatting
 const fmt = (iso, o) => iso ? new Intl.DateTimeFormat("en-US", { timeZone: TZ, ...o }).format(new Date(iso)) : "–";
@@ -355,7 +392,7 @@ async function api(action, args = {}) {
   const res = await fetch(API, {
     method: "POST",
     headers: { "content-type": "application/json", "x-telegram-init-data": tg ? tg.initData : "" },
-    body: JSON.stringify({ action, ...args }),
+    body: JSON.stringify({ action, ...(CARRIER_SEL ? { carrier: CARRIER_SEL } : {}), ...args }),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) { const e = new Error(body.error || `HTTP ${res.status}`); e.code = body.error; e.body = body; throw e; }
@@ -371,7 +408,8 @@ let view = "map";
 function show(v) {
   view = v;
   document.querySelectorAll(".tab").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.v === v)));
-  for (const id of ["map", "trucks", "companies", "groups", "alerts", "evidence"]) $("#v-" + id).hidden = id !== v;
+  for (const id of ["map", "trucks", "companies", "groups", "alerts", "evidence", "carriers"]) $("#v-" + id).hidden = id !== v;
+  if (v === "carriers") loadCarriers();
   if (v === "groups") loadGroups();
   if (v === "companies") loadCompanies();
   if (v === "map" && map) setTimeout(() => map.invalidateSize(), 0);
@@ -485,7 +523,7 @@ function renderTrucks() {
       <div class="sub"><span class="st ${mo.k}">${esc(mo.label)}</span> · last GPS ${ago(t.at)}</div>
       ${t.address ? `<div class="sub">📍 ${esc(t.address)}</div>` : ""}
       <div class="sub">${[t.driver && "👤 " + esc(t.driver), t.truck_number && "#" + esc(t.truck_number), t.group_title && t.has_group && "👥 " + esc(t.group_title),
-        t.company && "🏢 " + esc(t.company), t.source === "api" ? "ELD API" : (PROVIDER[t.provider] ?? ""),
+        CARRIER_SEL === "all" && t.carrier && "🚚 " + esc(t.carrier), t.company && "🏢 " + esc(t.company), t.source === "api" ? "ELD API" : (PROVIDER[t.provider] ?? ""),
         t.link_expires_at ? "link valid to " + fmt(t.link_expires_at, { year: "numeric", month: "short", day: "numeric" }) : ""].filter(Boolean).join(" · ")}</div>
       ${issues.length ? `<div class="warn">⚠ ${issues.join(" · ")}</div>` : ""}
       ${!t.has_group ? `<div class="sub">Tie it to the driver's group: write <code>/truck ${esc(t.truck_number ?? t.name ?? "")}</code> in that group, or press Edit.</div>` : ""}
@@ -493,7 +531,7 @@ function renderTrucks() {
       <div class="acts">${t.phone ? `<button class="copy" data-copy="${esc(t.phone)}">📞 ${esc(t.phone)}</button>` : ""}
         ${t.lat != null ? `<button class="copy" data-goto="${t.lat},${t.lng}">Show on map</button>` : ""}
         <button class="copy" data-edit="${t.id}">Edit</button>
-        <button class="copy danger" data-remove="${t.id}">Remove</button></div>
+        ${STAFF?.owner ? `<button class="copy danger" data-remove="${t.id}">Remove</button>` : ""}</div>
     </article>`;
   }).join("");
 }
@@ -577,8 +615,12 @@ function showWarn(mode) {
   $("#warnPill").className = "pill " + (mode ? "p-ok" : "p-muted");
 }
 async function loadSettings() {
-  try { showWarn((await api("settings")).settings.warn_mode); }
-  catch (err) { $("#warnLog").textContent = "Could not load: " + err.message; }
+  try {
+    const st = (await api("settings")).settings;
+    showWarn(st.warn_mode); showLang(st.lang);
+  } catch (err) { $("#warnLog").textContent = "Could not load: " + err.message; }
+  document.querySelectorAll("#warnMode .chip").forEach((b) => { b.disabled = !STAFF?.owner; });
+  if (!STAFF?.owner) $("#warnLog").textContent = "Only the company owner can change this.";
 }
 $("#warnMode").addEventListener("click", async (e) => {
   const b = e.target.closest(".chip"); if (!b) return;
@@ -622,7 +664,8 @@ let editingCompany = null;
 async function loadCompanies() {
   loadSettings();
   loadEditors();
-  loadFlyers();
+  if (STAFF?.platform_admin) loadFlyers();
+  loadTeam();
   const el = $("#companies");
   el.innerHTML = `<div class="empty">Loading…</div>`;
   try {
@@ -638,8 +681,8 @@ async function loadCompanies() {
         <div class="sub">🚛 <b>${c.trucks}</b> trucks${c.no_group ? ` · <b>${c.no_group}</b> without group` : ""}${c.units_seen != null ? ` · ELD reports ${c.units_seen}` : ""}${c.last_ok_at ? (c.last_error ? ` · last good sync ${ago(c.last_ok_at)}` : ` · synced ${ago(c.last_ok_at)}`) : ""}</div>
         <div class="sub">👥 Dispatch group: ${c.dispatch_title ? esc(c.dispatch_title) : "<span class='warn'>not set</span>"}</div>
         ${c.last_error ? `<div class="warn">❗ ${esc(c.last_error)}${c.failures ? ` (${c.failures}×)` : ""}</div>` : ""}
-        <div class="acts"><button class="copy" data-cedit="${c.id}">Edit</button><button class="copy" data-ctest="${c.id}">Test connection</button>
-          <button class="copy danger" data-cremove="${c.id}">Remove</button></div>
+        ${STAFF?.owner ? `<div class="acts"><button class="copy" data-cedit="${c.id}">Edit</button><button class="copy" data-ctest="${c.id}">Test connection</button>
+          <button class="copy danger" data-cremove="${c.id}">Remove</button></div>` : ""}
       </article>`;
     }).join("");
   } catch (err) { el.innerHTML = `<div class="empty"><b>Could not load companies</b>${esc(err.message)}</div>`; }
@@ -855,7 +898,7 @@ function closeSheet() {
   tg?.BackButton?.hide(); tg?.MainButton?.hide();
 }
 $("#closeSheet").addEventListener("click", closeSheet);
-tg?.BackButton?.onClick(() => { if (!$("#histForm").hidden) closeHistory(); else if (!$("#companyForm").hidden) closeCompanyForm(); else if (!$("#truckForm").hidden) closeForm(); else closeSheet(); });
+tg?.BackButton?.onClick(() => { if (!$("#carrierForm").hidden) closeCarrierForm(); else if (!$("#histForm").hidden) closeHistory(); else if (!$("#companyForm").hidden) closeCompanyForm(); else if (!$("#truckForm").hidden) closeForm(); else closeSheet(); });
 tg?.MainButton?.onClick(sendPdf);
 
 // ---------------------------------------------------------------- map editor (stage 14)
@@ -1090,7 +1133,7 @@ document.querySelectorAll("#edbar .tool").forEach((b) => b.addEventListener("cli
 
 // map editors (Companies tab)
 async function loadEditors() {
-  if (!STAFF?.can_edit_map) return;
+  if (!STAFF?.platform_admin) return;   // map editors are managed by the platform admin
   $("#editorsCard").hidden = false;
   try {
     const r = await api("map_editors");
@@ -1107,6 +1150,195 @@ $("#editors").addEventListener("click", async (e) => {
   if (!b || !(await askYes("Remove this map editor?"))) return;
   try { await api("map_set_editor", { tg_user_id: Number(b.dataset.uneditor), on: false }); loadEditors(); }
   catch (err) { $("#editorsHint").textContent = errText(err); }
+});
+
+// ---------------------------------------------------------------- carriers (stage 15)
+// The platform admin picks a carrier at the top (or "All carriers"); members always see their own.
+function linkBox(link, note) {
+  return `<div class="linkbox">${note ? `<div class="sub">${note}</div>` : ""}<code>${esc(link)}</code>
+    <div class="acts"><button class="copy" data-copy="${esc(link)}">Copy</button><button class="copy" data-share="${esc(link)}">Send in Telegram</button></div></div>`;
+}
+document.addEventListener("click", async (e) => {
+  const c = e.target.closest("[data-copy]"), sh = e.target.closest("[data-share]");
+  if (c) {
+    try { await navigator.clipboard.writeText(c.dataset.copy); c.textContent = "✅ Copied"; }
+    catch { window.prompt?.("Copy the link", c.dataset.copy); }
+  }
+  if (sh) {
+    const url = `https://t.me/share/url?url=${encodeURIComponent(sh.dataset.share)}&text=${encodeURIComponent("Road Watch — restricted road alerts for your trucks")}`;
+    if (tg?.openTelegramLink) tg.openTelegramLink(url); else window.open(url, "_blank");
+  }
+});
+function applyRole() {
+  const admin = !!STAFF?.platform_admin, all = admin && CARRIER_SEL === "all";
+  document.querySelector('.tab[data-v="carriers"]').hidden = !admin;
+  $("#carrierSel").hidden = !admin;
+  $("#addTruck").hidden = all;
+  $("#addCompany").hidden = !STAFF?.owner || all;
+  $("#langCard").hidden = !STAFF?.owner || all;
+  $("#teamCard").hidden = !STAFF?.owner || all;
+  $("#flyCard").hidden = !admin;
+  $("#inviteOwner").hidden = !admin;
+}
+function fillCarrierSel() {
+  const sel = $("#carrierSel");
+  sel.innerHTML = `<option value="all">All carriers</option>` +
+    CARRIERS.filter((c) => c.active).map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join("");
+  sel.value = CARRIER_SEL ?? "all";
+}
+$("#carrierSel").addEventListener("change", async () => {
+  CARRIER_SEL = $("#carrierSel").value;
+  applyRole();
+  await refreshTrucks().catch(() => {});
+  fitTrucks();
+  if (view !== "carriers" && view !== "map") show(view);   // reloads that view for the chosen carrier
+  if (CARRIER_SEL !== "all") api("settings").then((r) => showLang(r.settings.lang)).catch(() => {});
+  else setLang("en");
+});
+async function loadCarriers() {
+  const el = $("#carriers");
+  el.innerHTML = `<div class="empty">Loading…</div>`;
+  try {
+    CARRIERS = (await api("carriers")).carriers;
+    fillCarrierSel();
+    el.innerHTML = CARRIERS.map((c) => `<article class="card" data-carrier="${c.id}">
+      <div class="row"><span class="num" style="font-family:var(--ui)">${esc(c.name)}</span>
+        ${c.home ? `<span class="pill p-muted">yours</span>` : ""}
+        <span class="pill ${c.active ? "p-ok" : "p-muted"}">${c.active ? "Active" : "Switched off"}</span></div>
+      <div class="sub">${c.owners.length ? "👤 " + c.owners.map(esc).join(", ") : `<span class="warn">The owner has not joined yet</span>`}${c.usdot ? " · USDOT " + esc(c.usdot) : ""}</div>
+      <div class="sub">🚛 <b>${c.trucks}</b> trucks (${c.live} live) · 👥 ${c.groups} groups · ${c.companies} ELD API · ${c.members} people · ${c.alerts_7d} alerts in 7 days</div>
+      <div class="acts">
+        ${c.active ? `<button class="copy" data-open="${c.id}">Open</button>` : ""}
+        ${c.active ? `<button class="copy" data-ownerlink="${c.id}">🔗 Owner link</button>` : ""}
+        ${c.home ? "" : `<button class="copy ${c.active ? "danger" : ""}" data-toggle="${c.id}" data-on="${!c.active}">${c.active ? "Switch off" : "Switch on"}</button>`}
+      </div>
+      <div class="olink"></div>
+    </article>`).join("");
+  } catch (err) { el.innerHTML = `<div class="empty"><b>Could not load carriers</b>${esc(err.message)}</div>`; }
+}
+$("#carriers").addEventListener("click", async (e) => {
+  const open = e.target.closest("[data-open]"), ol = e.target.closest("[data-ownerlink]"), tgl = e.target.closest("[data-toggle]");
+  if (open) { CARRIER_SEL = open.dataset.open; fillCarrierSel(); $("#carrierSel").dispatchEvent(new Event("change")); show("trucks"); }
+  if (ol) {
+    const box = ol.closest(".card").querySelector(".olink");
+    try { const r = await api("carrier_owner_link", { id: ol.dataset.ownerlink }); box.innerHTML = linkBox(r.link, "Send this to the carrier's owner. It works once, for 7 days."); }
+    catch (err) { box.innerHTML = `<div class="warn">${esc(err.message)}</div>`; }
+  }
+  if (tgl) {
+    const on = tgl.dataset.on === "true";
+    if (!on && !(await askYes("Switch this carrier off? Its people lose access and its trucks are no longer tracked. You can switch it on again."))) return;
+    try { await api("carrier_set_active", { id: tgl.dataset.toggle, active: on }); loadCarriers(); }
+    catch (err) { tell(err.message); }
+  }
+});
+$("#addCarrier").addEventListener("click", () => {
+  $("#kName").value = ""; $("#kUsdot").value = ""; $("#kErr").textContent = "";
+  $("#carrierForm").hidden = false; tg?.BackButton?.show(); $("#kName").focus();
+});
+function closeCarrierForm() { $("#carrierForm").hidden = true; tg?.BackButton?.hide(); }
+$("#kCancel").addEventListener("click", closeCarrierForm);
+$("#carrierForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const name = $("#kName").value.trim();
+  if (!name) { $("#kErr").textContent = "Write the carrier's name."; return; }
+  $("#kSave").disabled = true;
+  try {
+    const r = await api("carrier_create", { name, usdot: $("#kUsdot").value.trim() });
+    closeCarrierForm();
+    $("#carrierNew").innerHTML = `<div class="newlink">${linkBox(r.link, `✅ <b>${esc(name)}</b> created. Send this link to its owner — it works once, for 7 days.`)}</div>`;
+    loadCarriers();
+  } catch (err) { $("#kErr").textContent = err.code === "carrier_exists" ? "A carrier with this name already exists." : err.message; }
+  finally { $("#kSave").disabled = false; }
+});
+
+// ---------------------------------------------------------------- team (carrier owner)
+async function loadTeam() {
+  if (!STAFF?.owner || (STAFF.platform_admin && CARRIER_SEL === "all")) return;
+  try {
+    const t = await api("team");
+    $("#teamPill").textContent = LANG === "uz" ? `${t.members.length} kishi` : `${t.members.length} ${t.members.length === 1 ? "person" : "people"}`;
+    $("#team").innerHTML = t.members.map((m) => `<div class="row"><span>👤 ${esc(m.name)}</span>
+      <span class="pill ${m.role === "owner" ? "p-ok" : "p-muted"}">${m.role}</span>
+      ${m.tg_user_id !== STAFF.tg_user_id && (m.role !== "owner" || STAFF.platform_admin)
+        ? `<button class="copy danger" data-unmember="${m.tg_user_id}" style="margin-left:auto">Remove</button>` : ""}</div>`).join("");
+    $("#teamLinks").innerHTML = t.invites.map((i) => `<div>${linkBox(i.link, `Open link for a new <b>${i.role}</b> · valid until ${esc(fmt(i.expires_at, { month: "short", day: "numeric" }))} ·
+      <button class="copy danger" data-revoke="${esc(i.code)}">Cancel link</button>`)}</div>`).join("");
+  } catch (err) { $("#team").innerHTML = `<div class="warn">${esc(err.message)}</div>`; }
+}
+async function newInvite(role) {
+  try { await api("team_invite", { role }); loadTeam(); } catch (err) { tell(err.message); }
+}
+$("#inviteDisp").addEventListener("click", () => newInvite("dispatcher"));
+$("#inviteOwner").addEventListener("click", () => newInvite("owner"));
+$("#teamCard").addEventListener("click", async (e) => {
+  const rm = e.target.closest("[data-unmember]"), rv = e.target.closest("[data-revoke]");
+  if (rm && await askYes("Remove this person? They can no longer open the app for your company.")) {
+    try { await api("team_remove", { tg_user_id: Number(rm.dataset.unmember) }); loadTeam(); } catch (err) { tell(err.message); }
+  }
+  if (rv) { try { await api("invite_revoke", { code: rv.dataset.revoke }); loadTeam(); } catch (err) { tell(err.message); } }
+});
+
+// ---------------------------------------------------------------- language (stage 15): English / O'zbekcha
+// Text nodes whose whole text is a known English phrase are swapped; new content is translated as it appears.
+const UZ = {
+  "Map": "Xarita", "Trucks": "Trucklar", "Companies": "Kompaniya", "Groups": "Guruhlar", "Alerts": "Ogohlantirishlar",
+  "Evidence": "Dalillar", "Carriers": "Carrierlar", "Show all trucks": "Hamma trucklar", "+ Add truck": "+ Truck qo'shish",
+  "All": "Hammasi", "Without group": "Guruhsiz", "Red / yellow": "Qizil / sariq", "No driving": "Yurish taqiqlangan",
+  "No-entry area": "Kirish taqiqlangan hudud", "No parking": "To'xtash taqiqlangan", "Truck route": "Truck yo'li",
+  "Driver warning": "Haydovchini ogohlantirish", "1 mile before": "1 mil oldin", "5 min before": "5 daqiqa oldin",
+  "Only when on it": "Faqat kirganda", "Language": "Til", "Team": "Jamoa", "+ Invite dispatcher": "+ Dispetcher taklif qilish",
+  "+ Owner link": "+ Egasi uchun havola", "+ Add company (ELD API)": "+ Kompaniya qo'shish (ELD API)", "Edit": "Tahrirlash",
+  "Test connection": "Ulanishni tekshirish", "Remove": "O'chirish", "Copy": "Nusxa olish", "Send in Telegram": "Telegram'da yuborish",
+  "Cancel link": "Havolani bekor qilish", "Cancel": "Bekor qilish", "Save": "Saqlash", "Save & test": "Saqlash va tekshirish",
+  "Close": "Yopish", "owner": "egasi", "dispatcher": "dispetcher", "Last 24 hours": "Oxirgi 24 soat", "Last 7 days": "Oxirgi 7 kun",
+  "Last 30 days": "Oxirgi 30 kun", "All trucks": "Hamma trucklar", "Restricted road": "Taqiqlangan yo'l", "Parking": "To'xtash",
+  "U-turn / left": "Burilib ketdi", "Tracking": "Kuzatuv", "Briefings": "Eslatmalar", "Show 5-minute repeats": "5 daqiqalik takrorlarni ko'rsatish",
+  "Loading…": "Yuklanmoqda…", "Add truck": "Truck qo'shish", "Edit truck": "Truckni tahrirlash", "Add company": "Kompaniya qo'shish",
+  "Edit company": "Kompaniyani tahrirlash", "Group for alerts": "Ogohlantirishlar guruhi", "Driver phone": "Haydovchi telefoni",
+  "Tracking link": "Kuzatuv havolasi", "Name": "Nomi", "Company": "Kompaniya", "On truck route": "Truck yo'lida",
+  "Approaching restricted road": "Taqiqlangan yo'lga yaqinlashmoqda", "On restricted road": "Taqiqlangan yo'lda",
+  "Did not enter": "Kirmadi", "Left restricted road": "Taqiqlangan yo'ldan chiqdi", "GPS lost near site": "Sayt yonida GPS yo'qoldi",
+  "Tracking broken": "Kuzatuv buzilgan", "Active": "Faol", "Switched off": "O'chirilgan", "Open": "Ochish", "Switch off": "O'chirish",
+  "Switch on": "Yoqish", "🔗 Owner link": "🔗 Egasi uchun havola", "+ Add carrier": "+ Carrier qo'shish", "Add carrier": "Carrier qo'shish",
+  "Create": "Yaratish", "Syncing": "Ishlayapti", "API error": "API xatosi", "No API key": "API kaliti yo'q", "Waiting": "Kutilmoqda",
+  "Language of this app for your company.": "Kompaniyangiz uchun ilova tili.",
+  "Only the company owner can change this.": "Buni faqat kompaniya egasi o'zgartira oladi.",
+  "When should the bot warn the driver's group before a restricted road? \"On the restricted road\" is always sent.":
+    "Bot haydovchi guruhini taqiqlangan yo'ldan qachon oldin ogohlantirsin? \"Taqiqlangan yo'lda\" xabari har doim yuboriladi.",
+  "People who can open this app for your company. Dispatchers see trucks and alerts; only owners change keys and settings.":
+    "Kompaniyangiz uchun ilovani ocha oladigan odamlar. Dispetcherlar truck va ogohlantirishlarni ko'radi; kalit va sozlamalarni faqat egasi o'zgartiradi.",
+  "✏️ Edit map": "✏️ Xaritani tahrirlash", "✅ Saved": "✅ Saqlandi", "Saving…": "Saqlanmoqda…",
+};
+let LANG = "en";
+const UZ_BACK = Object.fromEntries(Object.entries(UZ).map(([k, v]) => [v, k]));
+function swapText(root, dict) {
+  const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  for (let n = w.nextNode(); n; n = w.nextNode()) {
+    const raw = n.nodeValue, key = raw.trim();
+    if (key && dict[key] !== undefined) n.nodeValue = raw.replace(key, dict[key]);
+  }
+}
+const langObserver = new MutationObserver((list) => {
+  if (LANG !== "uz") return;
+  for (const m of list) for (const node of m.addedNodes) {
+    if (node.nodeType === 1) swapText(node, UZ);
+    else if (node.nodeType === 3 && UZ[node.nodeValue.trim()] !== undefined) node.nodeValue = node.nodeValue.replace(node.nodeValue.trim(), UZ[node.nodeValue.trim()]);
+  }
+});
+langObserver.observe(document.body, { childList: true, subtree: true });
+function setLang(l) {
+  if (l === LANG) return;
+  swapText(document.body, l === "uz" ? UZ : UZ_BACK);
+  LANG = l;
+  document.documentElement.lang = l;
+}
+function showLang(l) {
+  document.querySelectorAll("#langMode .chip").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.l === (l || "en"))));
+  if (!(STAFF?.platform_admin && CARRIER_SEL === "all")) setLang(l || "en");
+}
+$("#langMode").addEventListener("click", async (e) => {
+  const b = e.target.closest(".chip"); if (!b) return;
+  try { showLang((await api("save_settings", { lang: b.dataset.l })).settings.lang); loadTeam(); } catch (err) { tell(err.message); }
 });
 
 // ---------------------------------------------------------------- refresh loop
@@ -1130,7 +1362,7 @@ async function start() {
     tg.onEvent?.("themeChanged", () => { document.body.classList.toggle("dark", tg.colorScheme === "dark"); document.body.classList.toggle("light", tg.colorScheme !== "dark"); });
   }
   if (!tg || !tg.initData) {
-    gate("Open Road Watch from Telegram", "This app works inside the NUR CARGO bot. Open the bot and press <b>📱 Ilova</b>.");
+    gate("Open Road Watch from Telegram", "This app works inside the Road Watch bot. Open the bot and press <b>📱 Ilova</b>.");
     return;
   }
   initMap();
@@ -1138,8 +1370,15 @@ async function start() {
     const me = await api("me");
     TZ = me.tz || TZ;
     STAFF = me.staff;
+    if (STAFF.platform_admin) {
+      CARRIERS = me.carriers || [];
+      CARRIER_SEL = me.carrier ?? "all";
+      fillCarrierSel();
+    }
+    applyRole();
+    if (!(STAFF.platform_admin && CARRIER_SEL === "all")) api("settings").then((r) => showLang(r.settings.lang)).catch(() => {});
   } catch (err) {
-    if (err.code === "not_staff") gate("Send the password first", "Close this window, send the password to the bot in a private chat, then open the app again.");
+    if (err.code === "not_staff") gate("Open your invite link first", "Ask your company for a Road Watch invite link, open it in Telegram, then open the app again.<br><br>Kompaniyangizdan Road Watch taklif havolasini so'rang, uni Telegram'da oching va ilovani qayta oching.");
     else if (err.code === "not_signed_in") gate("Please reopen the panel", "Your Telegram sign-in expired. Close this window and open the panel from the bot again.");
     else gate("Road Watch is not reachable", esc(err.message));
     return;

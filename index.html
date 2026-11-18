@@ -131,7 +131,8 @@ select{font:inherit;font-size:13.5px;color:var(--fg);background:var(--bg);border
 .stat b{color:var(--fg);font-family:var(--data)}
 .gate{position:absolute;inset:0;display:grid;place-content:center;text-align:center;padding:24px;gap:8px;background:var(--bg);z-index:1000}
 .gate[hidden]{display:none}
-.gate h2{margin:0;font-size:18px} .gate p{margin:0;color:var(--muted);max-width:34ch}
+.gate h2{margin:0;font-size:18px} .gate p{margin:0;color:var(--muted);max-width:42ch;line-height:1.5}
+.gate a{color:var(--link);font-weight:600;text-decoration:none}
 .gate code{font-family:var(--data);background:var(--bg2);padding:2px 6px;border-radius:6px}
 code{font-family:var(--data);font-size:.92em;background:var(--bg2);padding:1px 5px;border-radius:5px}
 .card code{background:var(--bg)}
@@ -1482,7 +1483,24 @@ async function start() {
     applyRole();
     if (!(STAFF.platform_admin && CARRIER_SEL === "all")) api("settings").then((r) => showLang(r.settings.lang)).catch(() => {});
   } catch (err) {
-    if (err.code === "not_staff") gate("Open your invite link first", "Ask your company for a Road Watch invite link, open it in Telegram, then open the app again.<br><br>Kompaniyangizdan Road Watch taklif havolasini so'rang, uni Telegram'da oching va ilovani qayta oching.");
+    if (err.code === "not_staff") {
+      const tme = (u) => `<a href="https://t.me/${u}">@${u}</a>`;
+      gate("👋 Road Watch", `Amazon restricted road'lari uchun ogohlantirish boti.<br>
+        Kompaniyangizni ulash uchun yozing: <b>${tme("Keepdispatchin")}</b><br>
+        Kompaniyangiz allaqachon ulangan bo'lsa, ular bergan taklif havolasini oching.<br><br>
+        📢 Dispatching va trucking yangiliklari: ${tme("keepdispatchingroup")}<br>
+        🚚 Dispatch xizmati kerak bo'lsa: ${tme("abbas_Ibn_bakhodir")}
+        <span style="display:block;border-top:1px solid var(--line);margin-top:14px;padding-top:14px">
+        Restricted-road alerts for Amazon loads.<br>
+        To connect your company, message <b>${tme("Keepdispatchin")}</b>.<br>
+        If your company is already connected, open the invite link they gave you.<br><br>
+        📢 Dispatching &amp; trucking news: ${tme("keepdispatchingroup")}<br>
+        🚚 If you need a dispatch service: ${tme("abbas_Ibn_bakhodir")}</span>`);
+      $("#gate").addEventListener("click", (e) => {
+        const a = e.target.closest('a[href^="https://t.me/"]');
+        if (a && tg?.openTelegramLink) { e.preventDefault(); tg.openTelegramLink(a.href); }
+      });
+    }
     else if (err.code === "not_signed_in") gate("Please reopen the panel", "Your Telegram sign-in expired. Close this window and open the panel from the bot again.");
     else gate("Road Watch is not reachable", esc(err.message));
     return;

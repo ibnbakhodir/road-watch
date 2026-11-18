@@ -163,6 +163,8 @@ details summary{cursor:pointer}
 .inl{display:grid;gap:8px;margin-top:10px}
 .inl input,.inl select{font:inherit;font-size:14px;color:var(--fg);background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:9px 11px;width:100%}
 .inl .two{display:grid;grid-template-columns:1fr 70px;gap:8px}
+.inl button.del{border:0;border-radius:10px;padding:10px;font-weight:650;cursor:pointer;background:var(--road);color:#fff}
+.inl button.del:disabled{opacity:.5;cursor:default}
 .inl button.primary{border:0;border-radius:10px;padding:10px;font-weight:650;cursor:pointer;background:var(--btn);color:var(--btn-fg)}
 .lpr{display:flex;gap:8px;align-items:baseline;padding:6px 0;border-top:1px solid var(--line);font-size:13.5px}
 .lpr:first-child{border-top:0}
@@ -1252,6 +1254,7 @@ async function loadCarriers() {
         ${c.active ? `<button class="copy" data-open="${c.id}">Open</button>` : ""}
         ${c.active ? `<button class="copy" data-ownerlink="${c.id}">🔗 Owner link</button>` : ""}
         ${c.home ? "" : `<button class="copy ${c.active ? "danger" : ""}" data-toggle="${c.id}" data-on="${!c.active}">${c.active ? "Switch off" : "Switch on"}</button>`}
+        ${c.home || c.active ? "" : `<button class="copy danger" data-del="${c.id}">🗑 Delete</button>`}
       </div>
       <div class="olink"></div>
     </article>`).join("");
@@ -1259,6 +1262,44 @@ async function loadCarriers() {
 }
 $("#carriers").addEventListener("click", async (e) => {
   const open = e.target.closest("[data-open]"), ol = e.target.closest("[data-ownerlink]"), tgl = e.target.closest("[data-toggle]");
+  const del = e.target.closest("[data-del]"), delGo = e.target.closest("[data-delgo]"), delNo = e.target.closest("[data-delno]");
+  if (del) {
+    const c = CARRIERS.find((x) => x.id === del.dataset.del);
+    const box = del.closest(".card").querySelector(".olink");
+    box.innerHTML = `<div class="inl">
+      <div class="sub"><span class="warn">This deletes the company for good: its people, trucks, GPS, alerts, events and groups. It cannot be undone.</span></div>
+      <div class="sub"><span>First the bot sends you an Excel file with all of it in Telegram (no API keys). Only then is the company deleted, and the bot leaves its groups.</span></div>
+      <div class="sub"><span>Type the company name to confirm:</span> <b>${esc(c.name)}</b></div>
+      <input class="delname" autocomplete="off" placeholder="${esc(c.name)}">
+      <button class="del" data-delgo="${c.id}" disabled>🗑 Delete for good</button>
+      <button class="copy" data-delno>Cancel</button>
+      <div class="sub delmsg"></div>
+    </div>`;
+    const inp = box.querySelector(".delname"), go = box.querySelector("[data-delgo]");
+    inp.addEventListener("input", () => { go.disabled = inp.value.trim().toLowerCase() !== c.name.trim().toLowerCase(); });
+    inp.focus();
+  }
+  if (delNo) delNo.closest(".olink").innerHTML = "";
+  if (delGo && !delGo.disabled) {
+    const box = delGo.closest(".olink"), msg = box.querySelector(".delmsg");
+    delGo.disabled = true; delGo.textContent = "Sending the Excel file…";
+    try {
+      const r = await api("carrier_delete", { id: delGo.dataset.delgo, confirm: box.querySelector(".delname").value });
+      if (CARRIER_SEL === delGo.dataset.delgo) CARRIER_SEL = "all";
+      box.innerHTML = `<div class="sub">✅ <span>Deleted. The Excel file is in your chat with the bot:</span> <b>${esc(r.file)}</b></div>`;
+      setTimeout(loadCarriers, 2500);
+    } catch (err) {
+      const why = {
+        name_mismatch: "The name does not match.",
+        open_bot_first: "The bot cannot write to you. Open the bot, press Start, then try again. Nothing was deleted.",
+        export_failed: "The Excel file could not be sent, so nothing was deleted. Try again.",
+        carrier_active: "Switch the carrier off first.",
+        home_carrier: "Your own company cannot be deleted.",
+      }[err.code] || err.message;
+      msg.innerHTML = `<span class="warn">${esc(why)}</span>`;
+      delGo.disabled = false; delGo.textContent = "🗑 Delete for good";
+    }
+  }
   if (open) { CARRIER_SEL = open.dataset.open; fillCarrierSel(); $("#carrierSel").dispatchEvent(new Event("change")); show("trucks"); }
   if (ol) {
     const box = ol.closest(".card").querySelector(".olink");
@@ -1396,7 +1437,18 @@ const UZ = {
   "Approaching restricted road": "Taqiqlangan yo'lga yaqinlashmoqda", "On restricted road": "Taqiqlangan yo'lda",
   "Did not enter": "Kirmadi", "Left restricted road": "Taqiqlangan yo'ldan chiqdi", "GPS lost near site": "Sayt yonida GPS yo'qoldi",
   "Tracking broken": "Kuzatuv buzilgan", "Active": "Faol", "Switched off": "O'chirilgan", "Open": "Ochish", "Switch off": "O'chirish",
-  "Switch on": "Yoqish", "🔗 Owner link": "🔗 Egasi uchun havola", "+ Add carrier": "+ Carrier qo'shish", "Add carrier": "Carrier qo'shish",
+  "Switch on": "Yoqish", "🗑 Delete": "🗑 O'chirib tashlash", "🗑 Delete for good": "🗑 Butunlay o'chirish",
+  "This deletes the company for good: its people, trucks, GPS, alerts, events and groups. It cannot be undone.": "Bu kompaniyani butunlay o'chiradi: odamlari, trucklari, GPS, ogohlantirishlari, hodisalari va guruhlari. Qaytarib bo'lmaydi.",
+  "First the bot sends you an Excel file with all of it in Telegram (no API keys). Only then is the company deleted, and the bot leaves its groups.": "Avval bot sizga Telegram'da hammasi yozilgan Excel fayl yuboradi (API kalitlarisiz). Shundan keyingina kompaniya o'chadi va bot uning guruhlaridan chiqadi.",
+  "Type the company name to confirm:": "Tasdiqlash uchun kompaniya nomini yozing:",
+  "Sending the Excel file…": "Excel fayl yuborilmoqda…",
+  "Deleted. The Excel file is in your chat with the bot:": "O'chirildi. Excel fayl bot bilan chatingizda:",
+  "The name does not match.": "Nom mos kelmadi.",
+  "The bot cannot write to you. Open the bot, press Start, then try again. Nothing was deleted.": "Bot sizga yoza olmayapti. Botni ochib Start bosing, keyin qayta urinib ko'ring. Hech narsa o'chmadi.",
+  "The Excel file could not be sent, so nothing was deleted. Try again.": "Excel fayl yuborilmadi, shuning uchun hech narsa o'chmadi. Qayta urinib ko'ring.",
+  "Switch the carrier off first.": "Avval carrier'ni o'chiring (Switch off).",
+  "Your own company cannot be deleted.": "O'z kompaniyangizni o'chirib bo'lmaydi.",
+  "🔗 Owner link": "🔗 Egasi uchun havola", "+ Add carrier": "+ Carrier qo'shish", "Add carrier": "Carrier qo'shish",
   "Create": "Yaratish", "Syncing": "Ishlayapti", "API error": "API xatosi", "No API key": "API kaliti yo'q", "Waiting": "Kutilmoqda",
   "Language of this app for your company.": "Kompaniyangiz uchun ilova tili.",
   "Only the company owner can change this.": "Buni faqat kompaniya egasi o'zgartira oladi.",
